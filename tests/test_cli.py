@@ -51,6 +51,7 @@ def test_comprobar_contra_servidor_ollama_simulado(servidor_ollama, monkeypatch,
     assert main(["comprobar"]) == 0
     salida = capsys.readouterr().out
     assert "Ollama 0.12.0 responde" in salida and "Respuesta JSON válida" in salida
+    assert "solo el 75% del modelo cabe en la GPU" in salida
     monkeypatch.setenv("ARMA3IA_LLM_MODELO", "llama3.1:8b")
     assert main(["comprobar", "--rapido"]) == 1
     assert "ollama pull llama3.1:8b" in capsys.readouterr().out
@@ -85,7 +86,7 @@ def test_config_de_ejemplo_es_valida():
 
     raiz = Path(__file__).resolve().parents[1]
     config = cargar_config(raiz / "config" / "config.ejemplo.yaml")
-    assert config.llm.modelo == "qwen3:8b" and config.memoria.reflexion
+    assert config.llm.modelo == "qwen3:4b" and config.memoria.reflexion
 
 
 def test_campana_de_zeus_desde_la_consola(capsys):

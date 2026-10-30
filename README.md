@@ -72,10 +72,12 @@ Detalles en [docs/arquitectura.md](docs/arquitectura.md).
 
 ## Instalación en el PC de la IA
 
-Recomendado: **Ubuntu Server 24.04 LTS** instalado directamente (sin Proxmox ni máquinas
-virtuales): la GPU queda entera para el modelo, sin configurar *passthrough*, y los drivers de
-NVIDIA y Ollama se instalan en dos órdenes. Con 16 GB de RAM y una RTX 3060 de 12 GB, un modelo
-8B cabe completo en la GPU.
+Pensado para el equipo real del proyecto: un **portátil con RTX 3050 de 6 GB** (más una gráfica
+integrada AMD Radeon 680M), Ryzen 7 y 16 GB de RAM. Con 6 GB el modelo por defecto es
+**`qwen3:4b`**, que cabe entero en la GPU con margen.
+
+Recomendado: **Ubuntu 24.04 LTS** instalado directamente (sin máquinas virtuales), así la GPU
+queda entera para el modelo.
 
 ### Opción rápida (script)
 
@@ -83,39 +85,47 @@ NVIDIA y Ollama se instalan en dos órdenes. Con 16 GB de RAM y una RTX 3060 de 
 sudo apt-get install -y git
 git clone https://github.com/millasas/ia-arma3.git
 cd ia-arma3
-bash scripts/instalar_ubuntu.sh          # instala driver, Ollama, qwen3:8b y el proyecto
+bash scripts/instalar_ubuntu.sh          # driver, PRIME, Ollama solo en la NVIDIA, modelo y proyecto
 ```
 
-Si el script instala el driver de NVIDIA te pedirá reiniciar: reinicia y vuelve a lanzarlo.
+El script mira cuánta VRAM hay y elige el modelo (`qwen3:4b` con menos de 10 GB). Si instala el
+driver de NVIDIA o cambia PRIME te pedirá reiniciar: reinicia y vuelve a lanzarlo.
 
 ### Paso a paso
 
-1. **Driver de NVIDIA**
+1. **Driver de NVIDIA y gráfica dedicada** (portátil híbrido)
 
    ```bash
    sudo ubuntu-drivers install
+   sudo prime-select nvidia   # la NVIDIA siempre encendida, no se duerme entre consultas
    sudo reboot
-   nvidia-smi                 # debe mostrar la RTX 3060 con 12 GB
+   nvidia-smi                 # debe mostrar la RTX 3050 Laptop con 6 GB (6144 MiB)
    ```
 
-2. **Ollama y el modelo**
+2. **Ollama solo en la NVIDIA** y el modelo
 
    ```bash
    curl -fsSL https://ollama.com/install.sh | sh
-   ollama pull qwen3:8b
+   ollama pull qwen3:4b
    ```
 
-   Ajustes recomendados para 12 GB (`sudo systemctl edit ollama` y añade):
+   Ajustes para 6 GB (`sudo systemctl edit ollama` y añade). Las tres primeras líneas hacen
+   que Ollama use la NVIDIA e ignore la integrada AMD:
 
    ```ini
    [Service]
+   Environment="CUDA_VISIBLE_DEVICES=0"
+   Environment="ROCR_VISIBLE_DEVICES=-1"
+   Environment="HIP_VISIBLE_DEVICES=-1"
    Environment="OLLAMA_FLASH_ATTENTION=1"
    Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
    Environment="OLLAMA_NUM_PARALLEL=2"
+   Environment="OLLAMA_MAX_LOADED_MODELS=1"
    Environment="OLLAMA_KEEP_ALIVE=30m"
    ```
 
-   Después `sudo systemctl restart ollama`.
+   Después `sudo systemctl restart ollama`. Comprueba con `ollama ps` (tras una consulta) que la
+   columna PROCESSOR dice **100% GPU**.
 
 3. **El proyecto** (Python 3.10 o superior)
 
@@ -125,17 +135,24 @@ Si el script instala el driver de NVIDIA te pedirá reiniciar: reinicia y vuelve
    pip install -e ".[dev]"
    cp config/config.ejemplo.yaml config/config.yaml
    pytest                       # todo debe pasar (no necesita GPU)
-   arma3-ia comprobar           # comprueba Ollama, el modelo y la velocidad
+   arma3-ia comprobar           # Ollama, el modelo, la velocidad y si cabe entero en la GPU
    ```
+
+Al ser un portátil: déjalo **enchufado** y con el modo de energía en rendimiento (en batería la
+GPU baja mucho de velocidad), y con buena ventilación, porque la GPU va a trabajar seguido.
 
 ### Qué modelo usar
 
-| modelo        | VRAM aprox. | comentario |
-|---------------|-------------|------------|
-| `qwen3:8b`    | ~6 GB       | **por defecto**. Muy bueno con JSON y en español. `pensar: false` para tiempo real. |
-| `llama3.1:8b` | ~5 GB       | alternativa sólida; pon `pensar: null` en la configuración. |
-| `gemma3:12b`  | ~9 GB       | algo más listo y más lento; cabe en 12 GB con contexto 8192. |
-| `qwen3:14b`   | ~10 GB      | el mayor que cabe; úsalo para `autoentrenar`, no en partidas en vivo. |
+| modelo        | tamaño (Q4) | en 6 GB | comentario |
+|---------------|-------------|---------|------------|
+| `qwen3:4b`    | ~2,5 GB     | entero, contexto 8192, 2 consultas a la vez | **por defecto**. Buen JSON y buen español; `pensar: false` para tiempo real. |
+| `qwen3:8b`    | ~5,2 GB     | muy justo: `num_ctx: 4096`, `max_concurrencia: 1` y `OLLAMA_NUM_PARALLEL=1` | más listo pero más lento; puede que alguna capa vaya a la CPU (lo dice `arma3-ia comprobar`). Mejor para `autoentrenar` que en partida. |
+| `llama3.2:3b` | ~2 GB       | entero | el más rápido si la 4B no llega; algo peor en español. Pon `pensar: null`. |
+
+Velocidad orientativa en la RTX 3050 de 6 GB: `qwen3:4b` unos 35-50 tokens/s, así que una
+decisión (100-250 tokens) tarda 3-7 s. Zeus preparando una misión entera puede tardar 20-40 s,
+pero eso se hace antes de empezar. Si una decisión tarda más que `timeout_decision_s`, decide la
+doctrina por reglas y la partida no se para.
 
 Para cambiarlo: `ollama pull <modelo>` y edita `llm.modelo` en `config/config.yaml` (o usa la
 variable `ARMA3IA_LLM_MODELO`).

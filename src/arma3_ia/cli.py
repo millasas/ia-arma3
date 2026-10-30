@@ -91,6 +91,15 @@ async def orden_comprobar(args: argparse.Namespace, config: Config) -> int:
                   + respuesta.respuesta)
             if segundos > 20:
                 print(c("  Aviso: va lento. ¿Está usando la GPU? Mira 'ollama ps' y 'nvidia-smi'.", "amarillo"))
+            try:
+                en_gpu = await cliente.en_gpu()
+            except Exception:
+                en_gpu = None
+            if en_gpu is not None and en_gpu >= 0.99:
+                print(c("✓ El modelo está entero en la GPU", "verde"))
+            elif en_gpu is not None:
+                print(c(f"  Aviso: solo el {en_gpu:.0%} del modelo cabe en la GPU; el resto va a la CPU y será "
+                        "más lento. Baja llm.num_ctx o usa un modelo más pequeño (qwen3:4b).", "amarillo"))
     except Exception as error:
         print(c(f"✗ Error durante la comprobación: {error}", "rojo"))
         estado = 1

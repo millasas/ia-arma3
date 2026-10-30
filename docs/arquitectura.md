@@ -119,9 +119,16 @@ armamento) no se transmite: vuelve al comandante como aviso en su siguiente deci
 El modelo de vuelo del simulador es un modelo de juguete, no el de ARMA 3. Cuando exista el
 puente, los eventos `aterrizaje` del juego real alimentarán la misma habilidad.
 
-## Rendimiento previsto (RTX 3060 12 GB)
+## Rendimiento previsto (RTX 3050 de portátil, 6 GB)
 
-Un modelo 8B en Q4 ocupa unos 5-6 GB de VRAM y genera del orden de 40-60 tokens/s. Una decisión
-táctica son 100-250 tokens de salida, así que cada consulta tarda 2-6 s; con 2 consultas en
-paralelo, una ronda completa de 4-6 agentes cabe holgadamente en un ciclo de 10-30 s de juego.
-Con `pensar: true` (qwen3) la calidad sube algo pero cada consulta tarda varias veces más.
+`qwen3:4b` en Q4 ocupa unos 2,5 GB; con la caché KV a 8 bits y contexto 8192 caben 2 consultas
+a la vez y el total queda por debajo de 5 GB. Esa GPU tiene poco ancho de banda de memoria, así
+que genera del orden de 35-50 tokens/s: cada decisión táctica (100-250 tokens) tarda 3-7 s y una
+ronda de 4-6 agentes cabe en un ciclo de 15-30 s de juego. Los agentes no deciden todos a la vez
+(intervalos de 25-120 s y solo cuando pasa algo), y si una consulta se pasa del tiempo límite
+decide la doctrina por reglas.
+
+`qwen3:8b` (~5,2 GB) solo cabe con contexto 4096 y una consulta a la vez, y aun así puede que
+alguna capa vaya a la CPU; `arma3-ia comprobar` avisa del porcentaje que queda fuera de la GPU.
+En un portátil híbrido Ollama tiene que usar la NVIDIA (`CUDA_VISIBLE_DEVICES=0` y la AMD
+desactivada con `ROCR_VISIBLE_DEVICES=-1`); el script de instalación lo deja así.

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 class ConfigLLM(BaseModel):
     proveedor: Literal["ollama", "falso"] = "ollama"
     url: str = "http://localhost:11434"
-    modelo: str = "qwen3:8b"
+    modelo: str = "qwen3:4b"
     temperatura: float = 0.4
     num_ctx: int = 8192
     max_tokens: int = 700

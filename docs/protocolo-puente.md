@@ -8,12 +8,12 @@ que la parte de ARMA (SQF y la extensión) se pueda escribir sin tocar el núcle
 ## Arquitectura prevista
 
 ```
- PC de juego (servidor ARMA 3)                         PC de la IA (Ubuntu + RTX 3060)
+ PC de juego (servidor ARMA 3)                         PC de la IA (Ubuntu + RTX 3050)
 ┌──────────────────────────────────┐   LAN (TCP)   ┌──────────────────────────────────┐
 │ Misión / mod SQF                 │               │ arma3-ia (Python)                │
 │  · recoge grupos, contactos,     │               │  · PuenteArma3(Mundo)            │
 │    objetivos y chat              │               │  · CerebroBando por bando        │
-│  · ejecuta órdenes (waypoints,   │◄────────────► │  · Ollama (qwen3:8b) en la GPU   │
+│  · ejecuta órdenes (waypoints,   │◄────────────► │  · Ollama (qwen3:4b) en la GPU   │
 │    comportamiento, vehículos)    │  JSON líneas  │  · memoria SQLite                │
 │ Extensión (DLL) callExtension    │               │                                  │
 │  + ExtensionCallback             │               │                                  │

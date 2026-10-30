@@ -106,7 +106,7 @@ def instancia_minima(esquema: dict[str, Any]) -> Any:
 class ServidorOllamaFalso:
     """Servidor HTTP real que imita la API de Ollama (/api/chat, /api/tags, /api/version)."""
 
-    def __init__(self, modelo: str = "qwen3:8b") -> None:
+    def __init__(self, modelo: str = "qwen3:4b") -> None:
         self.modelo = modelo
         self.peticiones: list[dict[str, Any]] = []
         self.respuestas: list[str] = []
@@ -129,6 +129,9 @@ class ServidorOllamaFalso:
                     self._responder(200, {"version": "0.12.0"})
                 elif self.path == "/api/tags":
                     self._responder(200, {"models": [{"name": servidor.modelo}]})
+                elif self.path == "/api/ps":
+                    self._responder(200, {"models": [{"name": servidor.modelo, "model": servidor.modelo,
+                                                      "size": 4000, "size_vram": 3000}]})
                 else:
                     self._responder(404, {"error": "not found"})
 

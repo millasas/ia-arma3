@@ -16,7 +16,7 @@ from arma3_ia.llm import ClienteOllama, MensajeLLM, generar_estructurado
 pytestmark = pytest.mark.ollama
 
 URL = os.environ.get("ARMA3IA_LLM_URL", "http://localhost:11434")
-MODELO = os.environ.get("ARMA3IA_LLM_MODELO", "qwen3:8b")
+MODELO = os.environ.get("ARMA3IA_LLM_MODELO", "qwen3:4b")
 
 
 def test_el_modelo_real_da_ordenes_validas(obs, perfil):

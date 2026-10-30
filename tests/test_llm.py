@@ -110,13 +110,13 @@ def test_llm_falso_tactico_usa_el_fallback():
 
 # ------------------------------------------------------------------ Ollama (transporte simulado)
 def _cliente(manejador, **kwargs) -> ClienteOllama:
-    return ClienteOllama("http://ollama.test", "qwen3:8b", transporte=httpx.MockTransport(manejador),
+    return ClienteOllama("http://ollama.test", "qwen3:4b", transporte=httpx.MockTransport(manejador),
                          espera_reintento_s=0, **kwargs)
 
 
 def _respuesta_chat(contenido: str) -> httpx.Response:
     return httpx.Response(200, json={
-        "model": "qwen3:8b", "message": {"role": "assistant", "content": contenido},
+        "model": "qwen3:4b", "message": {"role": "assistant", "content": contenido},
         "done": True, "prompt_eval_count": 50, "eval_count": 10,
     })
 
@@ -137,7 +137,7 @@ def test_ollama_envia_el_formato_correcto():
     resultado, bruta, cliente = asyncio.run(probar())
     assert resultado.numero == 7
     p = peticiones[0]
-    assert p["model"] == "qwen3:8b" and p["stream"] is False
+    assert p["model"] == "qwen3:4b" and p["stream"] is False
     assert p["messages"][0] == {"role": "system", "content": "Eres un test."}
     assert p["format"]["type"] == "object"
     assert p["options"]["num_ctx"] == 4096
@@ -169,7 +169,7 @@ def test_ollama_modelo_no_descargado():
     def manejador(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"error": "model not found, try pulling it first"})
 
-    with pytest.raises(ErrorLLM, match="ollama pull qwen3:8b"):
+    with pytest.raises(ErrorLLM, match="ollama pull qwen3:4b"):
         asyncio.run(_cliente(manejador).chat(MENSAJES))
 
 
@@ -197,7 +197,7 @@ def test_ollama_error_500_se_reintenta():
 
 def test_ollama_contra_servidor_http_real(servidor_ollama):
     async def probar():
-        cliente = ClienteOllama(servidor_ollama.url, "qwen3:8b")
+        cliente = ClienteOllama(servidor_ollama.url, "qwen3:4b")
         informe = await cliente.comprobar()
         resultado, _ = await generar_estructurado(cliente, MENSAJES, DecisionLider)
         await cliente.cerrar()
@@ -210,7 +210,7 @@ def test_ollama_contra_servidor_http_real(servidor_ollama):
 
 
 def test_comprobar_sin_servidor():
-    informe = asyncio.run(ClienteOllama("http://127.0.0.1:9", "qwen3:8b").comprobar())
+    informe = asyncio.run(ClienteOllama("http://127.0.0.1:9", "qwen3:4b").comprobar())
     assert not informe.conectado and informe.error
 
 

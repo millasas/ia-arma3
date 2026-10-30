@@ -6,9 +6,13 @@
 llm:
   proveedor: ollama            # ollama | falso (falso = sin GPU, para pruebas)
   url: http://localhost:11434  # Ollama en el mismo PC de la IA
-  modelo: qwen3:8b             # alternativas: llama3.1:8b, gemma3:12b, qwen3:14b (más lento)
+  # Pensado para una GPU de 6 GB (RTX 3050/3060 de portátil). qwen3:4b cabe entero con contexto 8192.
+  # Si quieres probar qwen3:8b (Q4, ~5,2 GB) en 6 GB: num_ctx 4096 y max_concurrencia 1, y aun así
+  # puede que algunas capas vayan a la CPU (mira 'arma3-ia comprobar').
+  # Con 10-12 GB o más: qwen3:8b con num_ctx 8192 y max_concurrencia 2.
+  modelo: qwen3:4b
   temperatura: 0.4
-  num_ctx: 8192                # contexto por consulta; 8192 cabe de sobra en 12 GB con un 8B
+  num_ctx: 8192                # contexto por consulta (tokens)
   max_tokens: 700
   timeout_s: 120
   pensar: false                # qwen3 piensa más pero tarda mucho más; false para tiempo real

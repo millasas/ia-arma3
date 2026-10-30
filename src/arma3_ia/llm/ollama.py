@@ -36,7 +36,7 @@ class ClienteOllama(ClienteLLM):
     def __init__(
         self,
         url: str = "http://localhost:11434",
-        modelo: str = "qwen3:8b",
+        modelo: str = "qwen3:4b",
         *,
         temperatura: float = 0.4,
         num_ctx: int = 8192,
@@ -167,6 +167,16 @@ class ClienteOllama(ClienteLLM):
         r = await self._http.get("/api/tags")
         r.raise_for_status()
         return [str(m.get("name", "")) for m in r.json().get("models", [])]
+
+    async def en_gpu(self) -> float | None:
+        """Qué parte del modelo cargado está en la VRAM (1.0 = entero). None si no está cargado."""
+        r = await self._http.get("/api/ps")
+        r.raise_for_status()
+        for m in r.json().get("models", []):
+            if m.get("name") == self.nombre_modelo or m.get("model") == self.nombre_modelo:
+                total = float(m.get("size") or 0)
+                return float(m.get("size_vram") or 0) / total if total else None
+        return None
 
     async def comprobar(self) -> InformeOllama:
         """Comprueba la conexión, la versión y si el modelo configurado está descargado."""
