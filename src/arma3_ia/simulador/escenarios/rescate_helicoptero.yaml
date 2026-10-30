@@ -1,0 +1,50 @@
+id: rescate_helicoptero
+nombre: "Rescate en zona caliente"
+descripcion: >
+  Una patrulla ha quedado aislada tras una emboscada, lejos de la base y con insurgentes
+  cerca. Hay que sacarla con vida: un helicóptero de transporte, uno de escolta y la QRF.
+perfil_recomendado: contrainsurgencia
+mapa: { nombre: "Montes del Norte", ancho_m: 5000, alto_m: 5000 }
+duracion_max_s: 3000
+paso_s: 30
+condiciones: { hora: atardecer, clima: nubes, visibilidad_m: 1100, viento_ms: 6 }
+referencias:
+  - { nombre: "Pueblo de Sarab", tipo: urbano, posicion: [3600, 3300], radio_m: 220 }
+  - { nombre: "Pinar del Collado", tipo: bosque, posicion: [2900, 3600], radio_m: 350 }
+  - { nombre: "Cerro Pelado", tipo: colina, posicion: [3300, 3900], radio_m: 300 }
+  - { nombre: "Barranco Seco", tipo: bosque, posicion: [2200, 2500], radio_m: 300 }
+zonas_aterrizaje:
+  - { id: lz_cerro, nombre: "LZ Cerro", posicion: [3300, 3900] }
+  - { id: lz_era, nombre: "LZ La Era", posicion: [3700, 4300] }
+  - { id: lz_base, nombre: "Helipuerto", posicion: [600, 600] }
+bandos:
+  blufor:
+    controlador: ia
+    base: [600, 600]
+    unidades:
+      - { id: patrulla2, indicativo: Patrulla-2, tipo: infanteria, posicion: [3350, 3750], efectivos: 6, municion: 0.5 }
+      - { id: qrf, indicativo: Patrulla-1, tipo: infanteria, posicion: [700, 700], efectivos: 8 }
+      - { id: angel, tipo: helicoptero, posicion: [600, 600], efectivos: 4, capacidad: 1 }
+      - { id: escolta, tipo: helicoptero, posicion: [650, 550], efectivos: 2, armada: true }
+    objetivos:
+      - id: obj_rescate
+        nombre: "Extraer a la patrulla aislada"
+        tipo: extraer
+        posicion: [600, 600]
+        radio_m: 300
+        unidades: [patrulla2]
+        prioridad: 1
+        descripcion: "La patrulla aislada debe llegar viva a la base."
+  opfor:
+    controlador: guion
+    unidades:
+      - id: insurgentes_pueblo
+        tipo: infanteria
+        posicion: [3550, 3450]
+        efectivos: 6
+        comportamiento: patrulla
+        ruta: [[3500, 3550], [3250, 3500], [3600, 3300]]
+      - { id: emboscada_pinar, tipo: infanteria, posicion: [2900, 3550], efectivos: 5, comportamiento: emboscada, radio_activacion: 300 }
+      - { id: tecnica, tipo: motorizada, posicion: [4300, 3000], efectivos: 4, comportamiento: qrf }
+chat:
+  - { tiempo: 30, autor: "Teniente Vega", texto: "Centinela, aquí Vega. Patrulla-2 está aislada en el Cerro Pelado, ¿podéis sacarlos?" }

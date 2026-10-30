@@ -1,0 +1,37 @@
+id: moderno
+nombre: "Operaciones modernas"
+epoca: "Actualidad / 2035"
+descripcion: >
+  Fuerza conjunta moderna con radios cifradas, visión nocturna, helicópteros de transporte
+  y de ataque. Ambiente de ARMA 3 en Altis, Stratis o Malden.
+bando_ia:
+  nombre: "Fuerza de Tarea Aliada"
+  descripcion: "Infantería ligera apoyada por aviación del ejército."
+enemigo:
+  nombre: "Fuerzas hostiles"
+  descripcion: "Fuerza convencional con infantería, vehículos y posiciones preparadas."
+estilo_comunicacion: >
+  Procedimiento de radio militar en español: frases breves y precisas con indicativos
+  ("Alfa-1, aquí Mando, cambio"). Cuadrículas de 6 cifras, distancias en metros y rumbos.
+  Nada de relleno.
+doctrina:
+  - "Reconocer antes de actuar: ningún asalto sin información del objetivo."
+  - "Fijar y flanquear: una unidad fija al enemigo con fuego mientras otra maniobra."
+  - "Usar el apoyo aéreo para batir posiciones antes del asalto, no después."
+  - "Las zonas de aterrizaje (LZ) deben estar a más de 500 m del enemigo conocido."
+  - "Mantener la cohesión: las escuadras se apoyan entre sí y no quedan aisladas a más de 1 km."
+restricciones: []
+reglas_enfrentamiento:
+  - "Identificación positiva antes de abrir fuego."
+  - "Minimizar daños colaterales en zonas urbanas."
+personalidad_mando: "Metódico y profesional. Protege a sus hombres, pero es decidido cuando tiene ventaja."
+medios_aereos: true
+retardo_radio_s: 0
+indicativo_mando: "Mando"
+indicativo_enlace: "Mando-Radio"
+indicativos:
+  infanteria: ["Alfa-1", "Bravo-1", "Charlie-1", "Delta-1", "Eco-1"]
+  motorizada: ["Lanza-1", "Lanza-2"]
+  blindado: ["Martillo-1", "Martillo-2"]
+  helicoptero: ["Halcón-1", "Halcón-2", "Búho-1"]
+vocabulario: ["cambio", "recibido", "afirmativo", "negativo", "en posición", "contacto", "LZ fría", "LZ caliente"]

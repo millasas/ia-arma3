@@ -1,0 +1,59 @@
+id: asalto_aldea
+nombre: "Asalto a Aldea Vieja"
+descripcion: >
+  Dos escuadras y dos helicópteros deben tomar una aldea defendida. Entre la zona de
+  reunión y la aldea hay un bosque peligroso; una patrulla enemiga ronda la LZ norte y
+  una fuerza de reacción motorizada espera al noreste.
+perfil_recomendado: moderno
+mapa: { nombre: "Valle de prueba", ancho_m: 4000, alto_m: 4000 }
+duracion_max_s: 3600
+paso_s: 30
+tiempo_control_s: 60
+condiciones: { hora: dia, clima: despejado, visibilidad_m: 1500, viento_ms: 4 }
+referencias:
+  - { nombre: "Aldea Vieja", tipo: urbano, posicion: [2600, 2700], radio_m: 250 }
+  - { nombre: "Bosque Negro", tipo: bosque, posicion: [1700, 1800], radio_m: 400 }
+  - { nombre: "Colina 214", tipo: colina, posicion: [2000, 2900], radio_m: 250 }
+  - { nombre: "Olivar del Sur", tipo: bosque, posicion: [2900, 1600], radio_m: 300 }
+zonas_aterrizaje:
+  - { id: lz_norte, nombre: "LZ Norte", posicion: [2700, 3500] }
+  - { id: lz_este, nombre: "LZ Este", posicion: [3400, 2100] }
+bandos:
+  blufor:
+    controlador: ia
+    base: [500, 500]
+    unidades:
+      - { id: alfa, tipo: infanteria, posicion: [900, 800], efectivos: 8 }
+      - { id: bravo, tipo: infanteria, posicion: [700, 1000], efectivos: 8 }
+      - { id: halcon, tipo: helicoptero, posicion: [500, 500], efectivos: 4, capacidad: 1 }
+      - { id: buho, tipo: helicoptero, posicion: [550, 450], efectivos: 2, armada: true }
+    objetivos:
+      - id: obj_aldea
+        nombre: "Tomar Aldea Vieja"
+        tipo: capturar
+        posicion: [2600, 2700]
+        radio_m: 250
+        prioridad: 1
+        descripcion: "Expulsar al enemigo y controlar la aldea."
+      - id: obj_colina
+        nombre: "Reconocer la Colina 214"
+        tipo: reconocer
+        posicion: [2000, 2900]
+        radio_m: 250
+        prioridad: 2
+        obligatorio: false
+  opfor:
+    controlador: guion
+    unidades:
+      - { id: guarnicion, tipo: infanteria, posicion: [2600, 2700], efectivos: 6, comportamiento: defender }
+      - id: patrulla_norte
+        tipo: infanteria
+        posicion: [2700, 3300]
+        efectivos: 4
+        comportamiento: patrulla
+        ruta: [[2700, 3300], [3200, 2900], [2700, 2800]]
+      - { id: emboscada_bosque, tipo: infanteria, posicion: [1650, 1750], efectivos: 4, comportamiento: emboscada, radio_activacion: 250 }
+      - { id: qrf_motorizada, tipo: motorizada, posicion: [3600, 3600], efectivos: 4, comportamiento: qrf }
+chat:
+  - { tiempo: 60, autor: "Sargento López", texto: "Mando, aquí López. ¿Cuál es el plan para la aldea?" }
+  - { tiempo: 900, autor: "Cabo Ruiz", texto: "¿Cómo va la situación? ¿Necesitáis apoyo?" }

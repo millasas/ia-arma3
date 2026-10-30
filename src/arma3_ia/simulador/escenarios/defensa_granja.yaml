@@ -1,0 +1,56 @@
+id: defensa_granja
+nombre: "Defensa de la granja Saint-Martin (1944)"
+descripcion: >
+  Normandía, junio de 1944. Tres pelotones deben aguantar en una granja de piedra durante
+  media hora mientras la Wehrmacht contraataca por oleadas desde el este. Sin aviación y
+  con radios lentas.
+perfil_recomendado: ww2
+mapa: { nombre: "Bocage normando", ancho_m: 3000, alto_m: 3000 }
+duracion_max_s: 2400
+paso_s: 30
+tiempo_control_s: 60
+condiciones: { hora: dia, clima: nublado, visibilidad_m: 900, viento_ms: 3 }
+referencias:
+  - { nombre: "Granja Saint-Martin", tipo: urbano, posicion: [1400, 1500], radio_m: 180 }
+  - { nombre: "Seto norte", tipo: setos, posicion: [1500, 1900], radio_m: 250 }
+  - { nombre: "Seto sur", tipo: setos, posicion: [1500, 1100], radio_m: 250 }
+  - { nombre: "Bosquecillo del molino", tipo: bosque, posicion: [2300, 1500], radio_m: 250 }
+bandos:
+  blufor:
+    controlador: ia
+    base: [300, 1500]
+    unidades:
+      - { id: able, tipo: infanteria, posicion: [1350, 1500], efectivos: 8 }
+      - { id: baker, tipo: infanteria, posicion: [1400, 1650], efectivos: 8 }
+      - { id: charlie, tipo: infanteria, posicion: [1200, 1400], efectivos: 8 }
+    objetivos:
+      - id: obj_granja
+        nombre: "Defender la granja"
+        tipo: defender
+        posicion: [1400, 1500]
+        radio_m: 200
+        hasta_s: 1800
+        prioridad: 1
+        descripcion: "Aguantar hasta que lleguen los refuerzos (minuto 30)."
+  opfor:
+    controlador: guion
+    unidades:
+      - { id: mg42, tipo: infanteria, posicion: [2300, 1500], efectivos: 4, comportamiento: defender }
+      - id: oleada1
+        tipo: infanteria
+        posicion: [2900, 1700]
+        efectivos: 8
+        comportamiento: asalto
+        ruta: [[2300, 1700], [1400, 1500]]
+      - id: oleada2
+        tipo: infanteria
+        posicion: [2950, 1200]
+        efectivos: 8
+        comportamiento: qrf
+      - id: panzer
+        tipo: blindado
+        posicion: [2950, 2600]
+        efectivos: 4
+        comportamiento: qrf
+chat:
+  - { tiempo: 120, autor: "Soldado Miller", texto: "¿Cuánto tenemos que aguantar aquí, mi capitán?" }

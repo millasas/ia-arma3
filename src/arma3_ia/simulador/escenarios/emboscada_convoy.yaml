@@ -1,0 +1,58 @@
+id: emboscada_convoy
+nombre: "Emboscada al convoy"
+descripcion: >
+  La IA dirige a la milicia: un convoy enemigo recorre la carretera del valle. Hay que
+  destruirlo en el paso entre colinas y desaparecer antes de que llegue la reacción enemiga.
+perfil_recomendado: insurgencia
+mapa: { nombre: "Valle del río", ancho_m: 4000, alto_m: 3000 }
+duracion_max_s: 3000
+paso_s: 30
+condiciones: { hora: amanecer, clima: neblina, visibilidad_m: 800, viento_ms: 2 }
+referencias:
+  - { nombre: "Paso de las Cabras", tipo: colina, posicion: [2000, 1500], radio_m: 300 }
+  - { nombre: "Bosque del río", tipo: bosque, posicion: [1700, 1200], radio_m: 300 }
+  - { nombre: "Cueva del pastor", tipo: colina, posicion: [800, 2600], radio_m: 150 }
+  - { nombre: "Aldea de los pozos", tipo: urbano, posicion: [3500, 900], radio_m: 200 }
+bandos:
+  indfor:
+    controlador: ia
+    base: [800, 2600]
+    unidades:
+      - { id: lobo, tipo: infanteria, posicion: [1500, 2000], efectivos: 8, postura: sigilo }
+      - { id: zorro, tipo: infanteria, posicion: [1300, 1800], efectivos: 8, postura: sigilo }
+      - { id: aguila, tipo: infanteria, posicion: [2100, 1900], efectivos: 6, postura: sigilo }
+      - { id: tecnica1, tipo: motorizada, posicion: [1200, 2300], efectivos: 3 }
+    objetivos:
+      - id: obj_convoy
+        nombre: "Destruir el convoy"
+        tipo: destruir
+        posicion: [2000, 1500]
+        radio_m: 400
+        unidades: [convoy_cabeza, convoy_cola]
+        prioridad: 1
+        descripcion: "El convoy pasa por el Paso de las Cabras rumbo al este."
+      - id: obj_repliegue
+        nombre: "Replegarse a la cueva"
+        tipo: extraer
+        posicion: [800, 2600]
+        radio_m: 300
+        prioridad: 2
+        obligatorio: false
+  blufor:
+    controlador: guion
+    unidades:
+      - id: convoy_cabeza
+        tipo: motorizada
+        posicion: [200, 1500]
+        efectivos: 3
+        comportamiento: patrulla
+        ruta: [[1000, 1500], [2000, 1500], [3500, 900], [200, 1500]]
+      - id: convoy_cola
+        tipo: motorizada
+        posicion: [100, 1450]
+        efectivos: 3
+        comportamiento: patrulla
+        ruta: [[950, 1450], [1950, 1450], [3450, 880], [100, 1450]]
+      - { id: blindado_qrf, tipo: blindado, posicion: [3800, 600], efectivos: 4, comportamiento: qrf }
+chat:
+  - { tiempo: 60, autor: "Halcón del Monte", texto: "El convoy ya sale de la base, ¿dónde los esperamos?" }
