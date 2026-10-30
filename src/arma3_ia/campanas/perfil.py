@@ -20,6 +20,10 @@ DIRECTORIO_PERFILES = Path(__file__).parent / "perfiles"
 class InfoBando(BaseModel):
     nombre: str
     descripcion: str = ""
+    # Solo se usan cuando la IA juega también este bando (ver PerfilCampana.del_enemigo).
+    doctrina: list[str] = Field(default_factory=list)
+    indicativo_mando: str = "Mando"
+    indicativos: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class PerfilCampana(BaseModel):
@@ -41,6 +45,22 @@ class PerfilCampana(BaseModel):
     indicativo_enlace: str = "Radio"
     indicativos: dict[str, list[str]] = Field(default_factory=dict)
     vocabulario: list[str] = Field(default_factory=list)
+
+    def del_enemigo(self) -> PerfilCampana:
+        """El mismo perfil visto desde el otro bando, para que la IA juegue también al enemigo."""
+        return self.model_copy(
+            update={
+                "id": self.id,
+                "bando_ia": InfoBando(nombre=self.enemigo.nombre, descripcion=self.enemigo.descripcion),
+                "enemigo": InfoBando(nombre=self.bando_ia.nombre, descripcion=self.bando_ia.descripcion),
+                "doctrina": list(self.enemigo.doctrina),
+                "reglas_enfrentamiento": [],
+                "personalidad_mando": "",
+                "indicativo_mando": self.enemigo.indicativo_mando,
+                "indicativo_enlace": f"Radio {self.enemigo.nombre}",
+                "indicativos": dict(self.enemigo.indicativos),
+            }
+        )
 
     def indicativo_para(self, tipo: TipoUnidad, indice: int) -> str | None:
         """Indicativo temático para la unidad nº `indice` de ese tipo (None si no hay)."""

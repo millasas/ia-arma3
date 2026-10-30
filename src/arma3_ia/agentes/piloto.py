@@ -28,7 +28,7 @@ class Piloto(AgenteUnidad):
         decision = await self.consultar(
             tiempo=obs.tiempo,
             sistema=prompts.sistema_piloto(self.indicativo, unidad, self.ctx.perfil,
-                                           self.ctx.perfil.indicativo_mando),
+                                           self.superior and self.ctx.perfil.indicativo_mando, self.persona),
             usuario=prompts.usuario_unidad(obs, unidad, orden, self.orden_texto, self.orden_jugador,
                                            mensajes, self.historial, avisos, self.radio_contactos),
             esquema=DecisionPiloto,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from ..comunicacion import TipoMensaje
-from ..modelo import Observacion
+from ..modelo import Observacion, Persona
 from ..texto import normalizar, reloj
 from . import prompts, reglas
 from .base import Agente, ContextoAgentes, Saliente
@@ -25,6 +25,8 @@ NOMBRE_TAREA = {
     TareaMando.TRANSPORTE: "transporte",
     TareaMando.APOYO_AEREO: "apoyo aéreo sobre",
     TareaMando.REGRESAR_BASE: "regrese a la base",
+    TareaMando.PATRULLAR: "patrulle",
+    TareaMando.EMBOSCAR: "prepare una emboscada",
 }
 REPETIR_ORDEN_S = 300.0
 
@@ -32,8 +34,10 @@ REPETIR_ORDEN_S = 300.0
 class Comandante(Agente):
     rol = "comandante"
 
-    def __init__(self, ctx: ContextoAgentes, agente_id: str, indicativo: str) -> None:
+    def __init__(self, ctx: ContextoAgentes, agente_id: str, indicativo: str,
+                 persona: Persona | None = None) -> None:
         super().__init__(ctx, agente_id, indicativo)
+        self.persona = persona
         self.intencion = ""
         self._ultimas: dict[str, tuple[tuple[str, str, str], float]] = {}
         self._contactos_vistos: set[str] = set()
@@ -70,7 +74,7 @@ class Comandante(Agente):
         self._contactos_vistos |= {c.id for c in obs.contactos}
         decision = await self.consultar(
             tiempo=obs.tiempo,
-            sistema=prompts.sistema_comandante(self.indicativo, self.ctx.perfil),
+            sistema=prompts.sistema_comandante(self.indicativo, self.ctx.perfil, self.persona),
             usuario=prompts.usuario_comandante(obs, mensajes, self.intencion, self.avisos),
             esquema=DecisionComandante,
             fallback=lambda: reglas.decision_comandante(obs, self.ctx.perfil),
@@ -97,6 +101,8 @@ class Comandante(Agente):
             else:
                 conector = " en "
             texto += conector + orden.destino
+        if orden.ruta:
+            texto += " por " + " → ".join(orden.ruta)
         return texto + "." + (f" {orden.detalles}" if orden.detalles else "")
 
     def _repetida(self, unidad_id: str, orden: OrdenMando, tiempo: float) -> bool:
@@ -118,7 +124,7 @@ class Comandante(Agente):
             if aerea and not unidad.es_aerea:
                 self.avisos.append(f"'{orden.tarea.value}' solo vale para helicópteros, no para {unidad.indicativo}.")
                 continue
-            if unidad.es_aerea and orden.tarea in (TareaMando.DEFENDER, TareaMando.EMBARCAR):
+            if unidad.es_aerea and orden.tarea in (TareaMando.DEFENDER, TareaMando.EMBARCAR, TareaMando.EMBOSCAR):
                 self.avisos.append(f"'{orden.tarea.value}' no vale para el helicóptero {unidad.indicativo}.")
                 continue
             if orden.tarea == TareaMando.APOYO_AEREO and not unidad.armada:

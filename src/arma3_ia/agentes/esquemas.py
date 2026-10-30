@@ -32,7 +32,10 @@ SINONIMOS: dict[str, str] = {
     "cubrirse": "defender",
     "reconocimiento": "reconocer",
     "explorar": "reconocer",
-    "patrullar": "reconocer",
+    "patrulla": "patrullar",
+    "ronda": "patrullar",
+    "emboscada": "emboscar",
+    "tender emboscada": "emboscar",
     "retirada": "retirarse",
     "replegarse": "retirarse",
     "repliegue": "retirarse",
@@ -111,6 +114,8 @@ class TareaMando(str, Enum):
     TRANSPORTE = "transporte"
     APOYO_AEREO = "apoyo_aereo"
     REGRESAR_BASE = "regresar_base"
+    PATRULLAR = "patrullar"
+    EMBOSCAR = "emboscar"
 
 
 TAREAS_AEREAS = frozenset(
@@ -124,11 +129,22 @@ class OrdenMando(_Base):
     destino: str | None = Field(default=None, description="Cuadrícula de 6 cifras o nombre de un lugar")
     objetivo: str | None = Field(default=None, description="Contacto, unidad o helicóptero implicado")
     detalles: str = ""
+    ruta: list[str] = Field(default_factory=list, description="Puntos de una patrulla (cuadrícula o lugar)",
+                            json_schema_extra={"maxItems": 5})
 
     @field_validator("tarea", mode="before")
     @classmethod
     def _tarea(cls, valor: Any) -> Any:
         return normalizar_enum(valor, TareaMando)
+
+    @field_validator("ruta", mode="before")
+    @classmethod
+    def _ruta(cls, valor: Any) -> Any:
+        if valor is None:
+            return []
+        if isinstance(valor, list):
+            return [", ".join(map(str, v)) if isinstance(v, (list, tuple)) else str(v) for v in valor][:5]
+        return valor
 
 
 class DecisionComandante(_Base):

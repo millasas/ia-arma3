@@ -10,6 +10,16 @@ bando_ia:
 enemigo:
   nombre: "Fuerzas hostiles"
   descripcion: "Fuerza convencional con infantería, vehículos y posiciones preparadas."
+  doctrina:
+    - "Defensa en profundidad con posiciones preparadas y ametralladoras cruzando fuegos."
+    - "Contraatacar con la reserva motorizada cuando el atacante se desgaste."
+    - "Patrullar los accesos y avisar pronto de cualquier movimiento."
+  indicativo_mando: "Fortaleza"
+  indicativos:
+    infanteria: ["Rojo-1", "Rojo-2", "Rojo-3", "Rojo-4"]
+    motorizada: ["Ariete-1", "Ariete-2"]
+    blindado: ["Oso-1", "Oso-2"]
+    helicoptero: ["Avispa-1", "Avispa-2"]
 estilo_comunicacion: >
   Procedimiento de radio militar en español: frases breves y precisas con indicativos
   ("Alfa-1, aquí Mando, cambio"). Cuadrículas de 6 cifras, distancias en metros y rumbos.

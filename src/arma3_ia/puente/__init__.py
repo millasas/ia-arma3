@@ -1,6 +1,6 @@
 """Frontera entre la IA y el juego: la interfaz Mundo y el protocolo JSON del futuro puente."""
 
-from .interfaz import Mundo
+from .interfaz import ControlZeus, Mundo
 from .protocolo import (
     VERSION_PROTOCOLO,
     ErrorProtocolo,
@@ -20,6 +20,7 @@ from .protocolo import (
 
 __all__ = [
     "VERSION_PROTOCOLO",
+    "ControlZeus",
     "ErrorProtocolo",
     "Mundo",
     "Sobre",

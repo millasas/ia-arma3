@@ -7,7 +7,7 @@ from collections.abc import Iterable, Sequence
 from ..campanas import PerfilCampana
 from ..comunicacion import MensajeRadio
 from ..memoria import Leccion
-from ..modelo import MensajeChat, Observacion, UnidadPropia
+from ..modelo import MensajeChat, Observacion, Persona, UnidadPropia
 from ..texto import reloj
 from . import situacion as s
 from .esquemas import OrdenMando
@@ -46,12 +46,22 @@ def bloque_lecciones(lecciones: Sequence[Leccion]) -> str:
     return "\nLECCIONES APRENDIDAS EN MISIONES ANTERIORES (tenlas en cuenta):\n" + "\n".join(lineas)
 
 
+def bloque_persona(persona: Persona | None) -> str:
+    if persona is None:
+        return ""
+    return (
+        f"\nQUIÉN ERES: {persona.presentacion()}\n"
+        "Eres una persona, no una máquina: decide y habla como lo haría alguien con tu carácter "
+        "y tu experiencia (el miedo, el orgullo y el cansancio también cuentan)."
+    )
+
+
 def _final(ejemplo: str) -> str:
     return f"\nResponde SOLO con un objeto JSON con este formato:\n{ejemplo}"
 
 
 # ---------------------------------------------------------------------------------- comandante
-def sistema_comandante(indicativo: str, perfil: PerfilCampana) -> str:
+def sistema_comandante(indicativo: str, perfil: PerfilCampana, persona: Persona | None = None) -> str:
     aereas = (
         "transporte (un helicóptero lleva a la unidad indicada en \"objetivo\" hasta el destino), "
         "apoyo_aereo (un helicóptero armado ataca el destino u objetivo), regresar_base"
@@ -67,11 +77,13 @@ def sistema_comandante(indicativo: str, perfil: PerfilCampana) -> str:
         "- Usa solo las unidades listadas, con su indicativo exacto.\n"
         f"- {REGLAS_DESTINOS}\n"
         "- Tareas de tierra: mover, atacar, defender, reconocer, retirarse, esperar, embarcar "
-        "(objetivo = helicóptero).\n"
+        "(objetivo = helicóptero), patrullar (\"ruta\" = lista de puntos), emboscar (esperar ocultos "
+        "en el destino y atacar cuando llegue el enemigo).\n"
         f"- Tareas aéreas: {aereas}.\n"
         "- Da órdenes solo a las unidades que deban cambiar lo que hacen; las demás siguen con su tarea.\n"
         "- Atiende las solicitudes y los informes de tus unidades y de los jugadores.\n"
         "- Sé breve: frases cortas."
+        + bloque_persona(persona)
         + _final(EJEMPLO_COMANDANTE)
     )
 
@@ -105,11 +117,19 @@ def usuario_comandante(
 
 
 # ---------------------------------------------------------------------------------- líder
-def sistema_lider(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana, mando: str) -> str:
+def _cadena_mando(mando: str | None) -> str:
+    if mando:
+        return f"Recibes órdenes de {mando} y decides cómo cumplirlas."
+    return ("No hay un mando por encima de ti: tienes tu propia misión y decides tú, "
+            "coordinándote por radio con las demás unidades de tu bando.")
+
+
+def sistema_lider(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana, mando: str | None,
+                  persona: Persona | None = None) -> str:
     return (
         f"Eres {indicativo}, jefe de una escuadra de {s.NOMBRE_TIPO[unidad.tipo]} de "
-        f"{perfil.bando_ia.nombre} en una simulación militar realista (ARMA 3). Recibes órdenes de "
-        f"{mando} y decides cómo cumplirlas con tu escuadra. Cuida a tus hombres: usa el terreno, "
+        f"{perfil.bando_ia.nombre} en una simulación militar realista (ARMA 3). {_cadena_mando(mando)} "
+        "Cuida a tus hombres: usa el terreno, "
         "reconoce antes de entrar en zonas peligrosas y pide apoyo cuando lo necesites.\n"
         f"{perfil.bloque_contexto('lider')}\n\n"
         "NORMAS:\n"
@@ -120,7 +140,10 @@ def sistema_lider(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana, 
         "- \"informe\" es un mensaje breve para el mando (o null). \"solicitud\" pide apoyo_aereo, "
         "transporte, refuerzos, evacuacion o municion (o null). \"mensajes\" sirve para coordinarte "
         "con otras unidades por su indicativo.\n"
-        "- No informes de lo que el mando ya sabe; informa de contactos, bajas y órdenes cumplidas."
+        "- No informes de lo que el mando ya sabe; informa de contactos, bajas y órdenes cumplidas.\n"
+        "- Si tu orden es patrullar, recorre la ruta; si es emboscar, espera oculto (sigilo) y ataca "
+        "cuando el enemigo esté cerca."
+        + bloque_persona(persona)
         + _final(EJEMPLO_LIDER)
     )
 
@@ -144,6 +167,8 @@ def usuario_unidad(
         orden_linea = f"{orden.tarea.value}" + (f" → {orden.destino}" if orden.destino else "")
         if orden.objetivo:
             orden_linea += f" (objetivo: {orden.objetivo})"
+        if orden.ruta:
+            orden_linea += f" (ruta: {' → '.join(orden.ruta)})"
         if orden.detalles:
             orden_linea += f". {orden.detalles}"
         if orden_texto:
@@ -174,12 +199,14 @@ def usuario_unidad(
 
 
 # ---------------------------------------------------------------------------------- piloto
-def sistema_piloto(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana, mando: str) -> str:
+def sistema_piloto(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana, mando: str | None,
+                   persona: Persona | None = None) -> str:
     armas = "armado (puede dar apoyo aéreo)" if unidad.armada else "de transporte (sin armamento ofensivo)"
     return (
         f"Eres {indicativo}, piloto de un helicóptero {armas} de {perfil.bando_ia.nombre} en una "
-        f"simulación militar realista (ARMA 3). Recibes misiones de {mando}: transportar tropas, "
-        "dar apoyo aéreo o reconocer. Tu prioridad es cumplir la misión sin perder el aparato.\n"
+        f"simulación militar realista (ARMA 3). {_cadena_mando(mando)} Tus misiones: transportar "
+        "tropas, dar apoyo aéreo, patrullar o reconocer. Tu prioridad es cumplir la misión sin perder "
+        "el aparato.\n"
         f"{perfil.bloque_contexto('piloto')}\n\n"
         "NORMAS:\n"
         "- Acciones: volar (ir a un punto y quedarse en el aire), aterrizar (en el destino), "
@@ -192,6 +219,7 @@ def sistema_piloto(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana,
         "- Altitud: baja (difícil de ver, pero expuesto a fuego ligero), media, alta (más segura y "
         "menos precisa).\n"
         f"- {REGLAS_DESTINOS}"
+        + bloque_persona(persona)
         + _final(EJEMPLO_PILOTO)
     )
 
@@ -232,4 +260,46 @@ def usuario_enlace(
         s.seccion("CONVERSACIÓN RECIENTE", charla),
         f"MENSAJE NUEVO de {mensaje.autor} [{reloj(mensaje.tiempo)}]: {mensaje.texto}",
         "Responde ahora.",
+    )
+
+
+# ---------------------------------------------------------------------------------- NPC que charla
+EJEMPLO_NPC = '{"respuesta": "Aquí Baker. Seguimos en la granja, dos heridos leves. ¿Necesitáis algo?", "reenviar": []}'
+
+
+def sistema_npc(indicativo: str, unidad: UnidadPropia, perfil: PerfilCampana, persona: Persona | None) -> str:
+    quien = persona.presentacion() if persona else f"el jefe de {indicativo}"
+    return (
+        f"Eres {quien}, al mando de {indicativo} ({s.NOMBRE_TIPO[unidad.tipo]}) de {perfil.bando_ia.nombre} en una "
+        "partida de ARMA 3. Un jugador humano te habla directamente por radio o en persona.\n"
+        f"{perfil.bloque_contexto('enlace')}\n\n"
+        "NORMAS:\n"
+        "- Contesta en personaje, en una o dos frases, como hablaría alguien con tu carácter y tu historia.\n"
+        "- Habla de lo que sabes: tu unidad, tu tarea, lo que ves y lo que has vivido. No inventes datos.\n"
+        "- Si el jugador pide algo que no puedes hacer tú, reenvíalo en \"reenviar\" (para: \"mando\" o un "
+        "indicativo).\n"
+        "- Nunca digas que eres una IA."
+        + _final(EJEMPLO_NPC)
+    )
+
+
+def usuario_npc(
+    mensaje: MensajeChat,
+    obs: Observacion,
+    unidad: UnidadPropia,
+    orden: OrdenMando | None,
+    historial: Iterable[str],
+) -> str:
+    cerca = sorted((c for c in obs.contactos if c.posicion.distancia(unidad.posicion) <= 1000),
+                   key=lambda c: c.posicion.distancia(unidad.posicion))
+    tarea = "ninguna" if orden is None else orden.tarea.value + (f" → {orden.destino}" if orden.destino else "")
+    return s.unir(
+        s.cabecera(obs),
+        f"TU UNIDAD: {s.describir_unidad(unidad, obs)}",
+        f"TU TAREA: {tarea}",
+        s.seccion("ENEMIGOS CERCA", [s.describir_contacto(c, unidad.posicion) for c in cerca[:4]],
+                  "ninguno a la vista"),
+        s.seccion("LO ÚLTIMO QUE HAS HECHO", list(historial)),
+        f"{mensaje.autor} TE DICE: {mensaje.texto}",
+        "Contesta ahora.",
     )

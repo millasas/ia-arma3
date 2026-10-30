@@ -10,6 +10,15 @@ bando_ia:
 enemigo:
   nombre: "Wehrmacht"
   descripcion: "Infantería alemana veterana con ametralladoras MG42 y posiciones preparadas."
+  doctrina:
+    - "Defensa elástica: ceder terreno y contraatacar enseguida con reservas."
+    - "La MG42 es el eje de cada pelotón: protegerla y cambiarla de posición."
+    - "Aprovechar setos y granjas para tender emboscadas a corta distancia."
+  indicativo_mando: "Gefechtsstand"
+  indicativos:
+    infanteria: ["Gruppe Anton", "Gruppe Berta", "Gruppe Cäsar", "Gruppe Dora"]
+    motorizada: ["Kübel-1", "Kübel-2"]
+    blindado: ["Panzer-1", "Panzer-2"]
 estilo_comunicacion: >
   Radio de campaña de la época (SCR-300) o enlaces a pie: frases formales y cortas.
   Nada de jerga moderna: ni GPS, ni drones, ni "LZ". Referencias por cuadrícula del mapa

@@ -10,6 +10,16 @@ bando_ia:
 enemigo:
   nombre: "Fuerzas de ocupación"
   descripcion: "Ejército convencional con blindados, helicópteros y mejor equipo."
+  doctrina:
+    - "Patrullas motorizadas con apoyo de helicópteros y fuerza de reacción rápida."
+    - "Asegurar carreteras y pueblos; registrar edificios por secciones."
+    - "Ante una emboscada, fijar al enemigo y flanquear con superioridad de fuego."
+  indicativo_mando: "Bastión"
+  indicativos:
+    infanteria: ["Sierra-1", "Sierra-2", "Tango-1", "Tango-2"]
+    motorizada: ["Convoy-1", "Convoy-2"]
+    blindado: ["Rhino-1"]
+    helicoptero: ["Cuervo-1", "Cuervo-2"]
 estilo_comunicacion: >
   Radios baratas y nombres en clave. Mensajes cortos e informales. Nunca dar posiciones
   exactas en claro: se usan nombres de lugares conocidos por todos ("el pozo", "la curva").

@@ -15,7 +15,9 @@ from ..modelo import (
     MensajeChat,
     Objetivo,
     Observacion,
+    Persona,
     Postura,
+    Rasgo,
     TipoAccion,
     TipoObjetivo,
     UnidadPropia,
@@ -38,6 +40,31 @@ from .situacion import RADIO_LZ_CALIENTE, contactos_cerca, objetivos_pendientes
 
 PROPORCION_CRITICA = 0.35
 MORAL_CRITICA = 0.25
+LLEGADA_M = 120.0
+
+
+def _valor(persona: Persona | None) -> float:
+    return persona.valor if persona is not None else 0.0
+
+
+def roto(unidad: UnidadPropia, persona: Persona | None = None) -> bool:
+    """¿Ha llegado la unidad a su límite? Los valientes aguantan más, los nerviosos menos."""
+    v = _valor(persona)
+    return (unidad.proporcion_efectivos < PROPORCION_CRITICA - 0.3 * v
+            or unidad.moral < MORAL_CRITICA - 0.3 * v)
+
+
+def siguiente_punto(unidad: UnidadPropia, puntos: list[Posicion]) -> tuple[Posicion, bool]:
+    """Punto de patrulla al que dirigirse y si ya iba hacia él (para no repetir la orden)."""
+    destino = unidad.destino_actual
+    if destino is not None and unidad.accion_actual is not None:
+        for p in puntos:
+            if p.distancia(destino) < 30 and unidad.posicion.distancia(p) > LLEGADA_M:
+                return p, True
+    cercano = min(range(len(puntos)), key=lambda i: puntos[i].distancia(unidad.posicion))
+    if puntos[cercano].distancia(unidad.posicion) <= LLEGADA_M:
+        return puntos[(cercano + 1) % len(puntos)], False
+    return puntos[cercano], False
 
 
 def _mas_cercano(contactos: list[Contacto], punto: Posicion) -> Contacto | None:
@@ -171,7 +198,7 @@ def decision_comandante(obs: Observacion, perfil: PerfilCampana | None = None) -
 
 # ---------------------------------------------------------------------------------- líder
 def decision_lider(
-    unidad: UnidadPropia, orden: OrdenMando | None, obs: Observacion
+    unidad: UnidadPropia, orden: OrdenMando | None, obs: Observacion, persona: Persona | None = None
 ) -> DecisionLider:
     if unidad.estado == EstadoUnidad.EMBARCADA:
         return DecisionLider(evaluacion="Embarcados, esperando el desembarco.", accion=AccionTierra.CONTINUAR)
@@ -186,7 +213,7 @@ def decision_lider(
             f"{describir_relativa(unidad.posicion, cercano.posicion)}."
         )
 
-    if unidad.proporcion_efectivos < PROPORCION_CRITICA or unidad.moral < MORAL_CRITICA:
+    if roto(unidad, persona):
         return DecisionLider(
             evaluacion="Bajas graves o moral rota: hay que romper el contacto.",
             accion=AccionTierra.RETIRARSE,
@@ -200,7 +227,13 @@ def decision_lider(
         solicitud = Solicitud(tipo=TipoSolicitud.APOYO_AEREO, destino=cercano.posicion.cuadricula(),
                               detalles="Fuego intenso, necesitamos apoyo.")
 
+    agresivo = persona is not None and persona.tiene(Rasgo.AGRESIVO, Rasgo.IMPULSIVO, Rasgo.VALIENTE)
     if orden is None:
+        if cercano is not None and agresivo:
+            return DecisionLider(evaluacion="Sin órdenes, pero no vamos a esperar a que vengan.",
+                                 accion=AccionTierra.ATACAR, objetivo=cercano.id,
+                                 destino=cercano.posicion.cuadricula(), postura=Postura.COMBATE,
+                                 informe=informe, solicitud=solicitud)
         if cercano is not None:
             return DecisionLider(evaluacion="Sin órdenes y con enemigo cerca: defender.",
                                  accion=AccionTierra.DEFENDER, destino=unidad.posicion.cuadricula(),
@@ -209,6 +242,38 @@ def decision_lider(
 
     destino = orden.destino
     tarea = orden.tarea
+    lugares, limites = obs.lugares(), obs.limites()
+    if tarea == TareaMando.PATRULLAR:
+        if cercano is not None and cercano.posicion.distancia(unidad.posicion) < (500 if agresivo else 350):
+            return DecisionLider(evaluacion="Contacto durante la patrulla: lo enfrentamos.",
+                                 accion=AccionTierra.ATACAR, objetivo=cercano.id,
+                                 destino=cercano.posicion.cuadricula(), postura=Postura.COMBATE,
+                                 informe=informe, solicitud=solicitud)
+        textos = orden.ruta or ([destino] if destino else [])
+        puntos = [p for p in (parsear_posicion(x, lugares, limites) for x in textos) if p is not None]
+        if not puntos:
+            return DecisionLider(evaluacion="Patrulla sin ruta: vigilamos la zona.", accion=AccionTierra.DEFENDER,
+                                 destino=unidad.posicion.cuadricula(), informe=informe)
+        punto, en_marcha = siguiente_punto(unidad, puntos)
+        if en_marcha:
+            return DecisionLider(evaluacion="Seguimos la ruta de patrulla.", accion=AccionTierra.CONTINUAR,
+                                 informe=informe)
+        return DecisionLider(evaluacion="Siguiente tramo de la patrulla.", accion=AccionTierra.MOVER,
+                             destino=punto.cuadricula(), postura=Postura.NORMAL, informe=informe)
+    if tarea == TareaMando.EMBOSCAR:
+        puesto = parsear_posicion(destino, lugares, limites) if destino else None
+        puesto = puesto or unidad.posicion
+        alcance = 500 if agresivo else 400  # se abre fuego en cuanto entra en alcance de las armas
+        if cercano is not None and cercano.posicion.distancia(unidad.posicion) < alcance:
+            return DecisionLider(evaluacion="El enemigo ha entrado en la zona de muerte: ¡fuego!",
+                                 accion=AccionTierra.ATACAR, objetivo=cercano.id,
+                                 destino=cercano.posicion.cuadricula(), postura=Postura.COMBATE,
+                                 informe=informe)
+        if unidad.posicion.distancia(puesto) > LLEGADA_M:
+            return DecisionLider(evaluacion="Vamos a la posición de emboscada sin ser vistos.",
+                                 accion=AccionTierra.MOVER, destino=puesto.cuadricula(), postura=Postura.SIGILO)
+        return DecisionLider(evaluacion="Emboscada preparada: en silencio y a la espera.",
+                             accion=AccionTierra.DEFENDER, destino=puesto.cuadricula(), postura=Postura.SIGILO)
     if tarea == TareaMando.ATACAR:
         objetivo = orden.objetivo
         if cercano is not None and cercano.posicion.distancia(unidad.posicion) < 400:
@@ -289,7 +354,15 @@ def decision_piloto(
         return DecisionPiloto(evaluacion="Apoyo aéreo sobre el blanco.", accion=AccionAire.APOYO_AEREO,
                               destino=blanco.cuadricula(), objetivo=contacto.id if contacto else None,
                               informe=None)
-    if tarea in (TareaMando.MOVER, TareaMando.RECONOCER):
+    if tarea == TareaMando.PATRULLAR:
+        textos = orden.ruta or ([orden.destino] if orden.destino else [])
+        puntos = [p for p in (parsear_posicion(x, lugares, limites) for x in textos) if p is not None]
+        if puntos:
+            punto, en_marcha = siguiente_punto(unidad, puntos)
+            if en_marcha:
+                return DecisionPiloto(evaluacion="Sigo la ruta de patrulla.", accion=AccionAire.CONTINUAR)
+            return DecisionPiloto(evaluacion="Patrulla aérea.", accion=AccionAire.VOLAR, destino=punto.cuadricula())
+    if tarea in (TareaMando.MOVER, TareaMando.RECONOCER, TareaMando.PATRULLAR):
         return DecisionPiloto(evaluacion="Vuelo al punto indicado.", accion=AccionAire.VOLAR,
                               destino=orden.destino)
     if tarea in (TareaMando.REGRESAR_BASE, TareaMando.RETIRARSE):
@@ -318,8 +391,35 @@ def respuesta_enlace(mensaje: MensajeChat, obs: Observacion, indicativo: str) ->
     )
 
 
+def respuesta_npc(
+    mensaje: MensajeChat,
+    unidad: UnidadPropia,
+    obs: Observacion,
+    indicativo: str,
+    orden: OrdenMando | None,
+    persona: Persona | None = None,
+) -> RespuestaEnlace:
+    """Lo que contesta un jefe de grupo sin modelo: su estado, su tarea y lo que ve, con algo de carácter."""
+    cerca = sorted(contactos_cerca(obs, unidad.posicion, 800), key=lambda c: c.posicion.distancia(unidad.posicion))
+    tarea = "sin órdenes" if orden is None else f"con la tarea de {orden.tarea.value.replace('_', ' ')}"
+    partes = [f"{mensaje.autor}, aquí {indicativo}."]
+    if persona is not None and unidad.bajo_fuego and persona.tiene(Rasgo.NERVIOSO, Rasgo.NOVATO):
+        partes.append("¡Nos están dando duro!")
+    elif persona is not None and persona.tiene(Rasgo.VALIENTE, Rasgo.AGRESIVO, Rasgo.VETERANO):
+        partes.append("Todo bajo control.")
+    partes.append(f"Somos {unidad.efectivos} de {unidad.efectivos_max}, {tarea}.")
+    if cerca:
+        partes.append(f"Enemigo a {describir_relativa(unidad.posicion, cerca[0].posicion)}.")
+    reenviar = []
+    norm = normalizar(mensaje.texto)
+    if any(p in norm for p in ("apoyo", "ayuda", "refuerz", "evacu", "municion")):
+        reenviar.append(MensajeSaliente(para="mando", texto=recortar(mensaje.texto, 300)))
+        partes.append("Lo paso al mando.")
+    return RespuestaEnlace(respuesta=" ".join(partes), reenviar=reenviar)
+
+
 # ---------------------------------------------------------------------------------- reflejos
-def reflejo(unidad: UnidadPropia, obs: Observacion) -> Accion | None:
+def reflejo(unidad: UnidadPropia, obs: Observacion, persona: Persona | None = None) -> Accion | None:
     """Reacción inmediata sin pensar (entre decisiones). None si no hace falta."""
     if not unidad.operativa or unidad.estado == EstadoUnidad.EMBARCADA:
         return None
@@ -331,7 +431,7 @@ def reflejo(unidad: UnidadPropia, obs: Observacion) -> Accion | None:
         return None
     if (
         unidad.bajo_fuego
-        and unidad.proporcion_efectivos < 0.4
+        and unidad.proporcion_efectivos < 0.4 - 0.3 * _valor(persona)
         and unidad.accion_actual != TipoAccion.RETIRARSE
     ):
         return Accion(unidad=unidad.id, tipo=TipoAccion.RETIRARSE, destino=punto_seguro(obs, unidad),

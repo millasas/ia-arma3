@@ -8,11 +8,11 @@ from pydantic import BaseModel
 
 from ..comunicacion import MensajeRadio, TipoMensaje
 from ..geo import Posicion, parsear_posicion
-from ..modelo import Accion, EstadoUnidad, Observacion, Postura, TipoAccion, UnidadPropia
+from ..modelo import Accion, EstadoUnidad, MensajeChat, Observacion, Persona, Postura, TipoAccion, UnidadPropia
 from ..texto import normalizar, recortar, reloj
 from . import prompts, reglas
 from .base import Agente, ContextoAgentes, ResultadoAgente, Saliente
-from .esquemas import AccionTierra, DecisionLider, MensajeSaliente, OrdenMando, Solicitud
+from .esquemas import AccionTierra, DecisionLider, MensajeSaliente, OrdenMando, RespuestaEnlace, Solicitud
 
 REPETICION_RADIO_S = 120.0
 EVENTOS_UNIDAD = frozenset(
@@ -37,8 +37,12 @@ class AgenteUnidad(Agente):
     radio_contactos = 800.0
     intervalo_attr = "intervalo_lider_s"
 
-    def __init__(self, ctx: ContextoAgentes, agente_id: str, indicativo: str) -> None:
+    def __init__(self, ctx: ContextoAgentes, agente_id: str, indicativo: str,
+                 persona: Persona | None = None, superior: str | None = "mando") -> None:
         super().__init__(ctx, agente_id, indicativo)
+        self.persona = persona
+        # A quién informa por radio. None = no hay mando: informa a todas las unidades del bando.
+        self.superior = superior
         self.orden: OrdenMando | None = None
         self.orden_texto = ""
         self.orden_jugador = ""
@@ -59,6 +63,12 @@ class AgenteUnidad(Agente):
             elif m.tipo == TipoMensaje.JUGADOR and self.ctx.config.jugadores_al_mando:
                 self.orden_jugador = m.texto
                 self.orden_nueva = True
+
+    def asignar_orden(self, orden: OrdenMando, texto: str = "") -> None:
+        """Tarea propia del NPC (la que le da Zeus al crear la misión), sin pasar por la radio."""
+        self.orden = orden
+        self.orden_texto = texto
+        self.orden_nueva = True
 
     def necesita_decidir(self, obs: Observacion, unidad: UnidadPropia) -> bool:
         if not unidad.operativa:
@@ -97,13 +107,14 @@ class AgenteUnidad(Agente):
     def _salientes(self, tiempo: float, informe: str | None, solicitud: Solicitud | None,
                    mensajes: list[MensajeSaliente]) -> list[Saliente]:
         salientes = []
+        destino = self.superior or "todos"
         if informe:
-            salientes.append(Saliente("mando", informe, TipoMensaje.INFORME))
+            salientes.append(Saliente(destino, informe, TipoMensaje.INFORME))
         if solicitud is not None:
             texto = f"Solicito {solicitud.tipo.value.replace('_', ' ')}"
             texto += f" en {solicitud.destino}" if solicitud.destino else ""
             texto += f". {solicitud.detalles}" if solicitud.detalles else "."
-            salientes.append(Saliente("mando", texto, TipoMensaje.SOLICITUD,
+            salientes.append(Saliente(destino, texto, TipoMensaje.SOLICITUD,
                                       {"solicitud": solicitud.model_dump(mode="json")}))
         for m in mensajes:
             salientes.append(Saliente(m.para, m.texto, TipoMensaje.COORDINACION))
@@ -117,6 +128,45 @@ class AgenteUnidad(Agente):
             return True
         self._ultimos_envios[clave] = tiempo
         return False
+
+    @property
+    def nombre_chat(self) -> str:
+        if self.persona is None:
+            return self.indicativo
+        return f"{f'{self.persona.rango} ' if self.persona.rango else ''}{self.persona.nombre} ({self.indicativo})"
+
+    def nombres(self) -> list[str]:
+        """Cómo pueden llamarle los jugadores: indicativo, nombre, apellido, rango + apellido."""
+        nombres = [self.indicativo]
+        if self.persona is not None:
+            partes = self.persona.nombre.split()
+            nombres += [self.persona.nombre, partes[-1]]
+            if self.persona.rango:
+                nombres.append(f"{self.persona.rango} {partes[-1]}")
+        return [normalizar(n) for n in nombres if len(normalizar(n)) >= 3]
+
+    async def charlar(
+        self, mensaje: MensajeChat, obs: Observacion, unidad: UnidadPropia
+    ) -> tuple[MensajeChat, list[Saliente]]:
+        """Un jugador habla directamente con este NPC: contesta en personaje."""
+        if self.ctx.config.jugadores_al_mando:
+            self.orden_jugador = mensaje.texto
+            self.orden_nueva = True
+        orden = self.orden
+        decision = await self.consultar(
+            tiempo=obs.tiempo,
+            sistema=prompts.sistema_npc(self.indicativo, unidad, self.ctx.perfil, self.persona),
+            usuario=prompts.usuario_npc(mensaje, obs, unidad, orden, self.historial),
+            esquema=RespuestaEnlace,
+            fallback=lambda: reglas.respuesta_npc(mensaje, unidad, obs, self.indicativo, orden, self.persona),
+            consulta_lecciones=mensaje.texto,
+            rol="npc",
+        )
+        respuesta = MensajeChat(autor=self.nombre_chat, texto=decision.respuesta, canal=mensaje.canal,
+                                tiempo=obs.tiempo, es_ia=True)
+        salientes = [Saliente(r.para, f"De {mensaje.autor} (jugador): {r.texto}", TipoMensaje.JUGADOR,
+                              {"autor": mensaje.autor}) for r in decision.reenviar]
+        return respuesta, salientes
 
     def _apuntar(self, obs: Observacion, decision: BaseModel, extra: str = "") -> None:
         datos: dict[str, Any] = decision.model_dump()
@@ -144,11 +194,11 @@ class LiderEscuadra(AgenteUnidad):
         decision = await self.consultar(
             tiempo=obs.tiempo,
             sistema=prompts.sistema_lider(self.indicativo, unidad, self.ctx.perfil,
-                                          self.ctx.perfil.indicativo_mando),
+                                          self.superior and self.ctx.perfil.indicativo_mando, self.persona),
             usuario=prompts.usuario_unidad(obs, unidad, orden, self.orden_texto, self.orden_jugador,
                                            mensajes, self.historial, avisos, self.radio_contactos),
             esquema=DecisionLider,
-            fallback=lambda: reglas.decision_lider(unidad, orden, obs),
+            fallback=lambda: reglas.decision_lider(unidad, orden, obs, self.persona),
             consulta_lecciones=consulta,
         )
         self._apuntar(obs, decision)

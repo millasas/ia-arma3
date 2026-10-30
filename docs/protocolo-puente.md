@@ -174,3 +174,19 @@ tráfico de radio entre agentes con `canal: "radio"` (mostrarlo con `sideChat` o
 
 `estado`: `victoria`, `parcial` o `derrota`. Con esto la IA escribe su informe post-acción,
 actualiza la utilidad de las lecciones que usó y guarda lecciones nuevas.
+
+## Poderes de Zeus (propuesta, aún no en el codificador)
+
+El director de juego necesita cuatro operaciones más (`ControlZeus` en
+`src/arma3_ia/puente/interfaz.py`, ya implementadas en el simulador). Propuesta de mensajes
+para cuando se escriba el puente:
+
+| IA → ARMA                    | datos                                                                 | en SQF |
+|------------------------------|-----------------------------------------------------------------------|--------|
+| `zeus_vista` (petición)      | —                                                                     | ARMA responde con todos los grupos de todos los bandos, objetivos y condiciones |
+| `zeus_crear_grupo`           | `bando`, `id`, `indicativo`, `tipo`, `posicion`, `efectivos`, `armada` | `createGroup` + `createUnit`/`createVehicle`, devuelve el id |
+| `zeus_condiciones`           | `hora` (`dia`, `amanecer`, `atardecer`, `noche`), `clima` (`despejado`, `nubes`, `lluvia`, `niebla`) | `skipTime`, `setOvercast`, `setRain`, `setFog` |
+| `zeus_anuncio`               | `texto`                                                               | `systemChat` o `globalChat` a todos |
+
+La vista global es como la observación pero sin niebla de guerra: Zeus lo ve todo. Los grupos
+creados por Zeus pasan a ser NPC normales: el bando correspondiente les asigna persona y orden.

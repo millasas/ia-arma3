@@ -102,11 +102,11 @@ class Agente:
         self.recientes.extend(mensajes)
         return mensajes
 
-    def _lecciones(self, consulta: str) -> list[Leccion]:
+    def _lecciones(self, consulta: str, rol: str | None = None) -> list[Leccion]:
         if self.ctx.recuperador is None:
             return []
         return self.ctx.recuperador.buscar(
-            self.rol, self.ctx.perfil.id, consulta, k=self.ctx.config.lecciones_por_decision
+            rol or self.rol, self.ctx.perfil.id, consulta, k=self.ctx.config.lecciones_por_decision
         )
 
     async def consultar(
@@ -118,9 +118,14 @@ class Agente:
         esquema: type[T],
         fallback: Callable[[], T],
         consulta_lecciones: str,
+        rol: str | None = None,
     ) -> T:
-        """Pide una decisión al modelo; si falla, usa la doctrina por reglas (`fallback`)."""
-        lecciones = self._lecciones(consulta_lecciones)
+        """Pide una decisión al modelo; si falla, usa la doctrina por reglas (`fallback`).
+
+        `rol` cambia el papel de esta consulta (p. ej. "npc" cuando un jefe de grupo charla).
+        """
+        rol = rol or self.rol
+        lecciones = self._lecciones(consulta_lecciones, rol)
         sistema_completo = sistema + prompts.bloque_lecciones(lecciones)
         ids = {leccion.id for leccion in lecciones if leccion.id is not None}
         self.lecciones_usadas |= ids
@@ -136,7 +141,7 @@ class Agente:
                         [MensajeLLM("system", sistema_completo), MensajeLLM("user", usuario)],
                         esquema,
                         reintentos=self.ctx.reintentos_llm,
-                        metadatos={"rol": self.rol, "agente": self.id, "fallback": fallback},
+                        metadatos={"rol": rol, "agente": self.id, "fallback": fallback},
                     ),
                     timeout=self.ctx.config.timeout_decision_s,
                 )
@@ -151,7 +156,7 @@ class Agente:
                 mision_id=self.ctx.mision_id,
                 tiempo=tiempo,
                 agente=self.indicativo,
-                rol=self.rol,
+                rol=rol,
                 sistema=sistema_completo,
                 usuario=usuario,
                 respuesta=decision.model_dump_json(),

@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .geo import Posicion
 from .texto import normalizar
@@ -164,6 +164,87 @@ class Contacto(BaseModel):
     visto_hace_s: float = 0.0
     precision_m: float = 50.0
     en_vuelo: bool = False
+
+
+class Rasgo(str, Enum):
+    """Rasgos de carácter de un NPC: cambian cómo decide y cómo habla."""
+
+    VETERANO = "veterano"
+    NOVATO = "novato"
+    VALIENTE = "valiente"
+    PRUDENTE = "prudente"
+    AGRESIVO = "agresivo"
+    DISCIPLINADO = "disciplinado"
+    NERVIOSO = "nervioso"
+    IMPULSIVO = "impulsivo"
+
+
+# Cuánto aguanta bajo el fuego cada rasgo (positivo = más valor, negativo = se rompe antes).
+VALOR_RASGO = {
+    Rasgo.VETERANO: 0.15,
+    Rasgo.NOVATO: -0.15,
+    Rasgo.VALIENTE: 0.3,
+    Rasgo.PRUDENTE: -0.15,
+    Rasgo.AGRESIVO: 0.2,
+    Rasgo.DISCIPLINADO: 0.1,
+    Rasgo.NERVIOSO: -0.3,
+    Rasgo.IMPULSIVO: 0.1,
+}
+
+
+class Persona(BaseModel):
+    """El jefe de un grupo de NPC visto como una persona: nombre, rango, carácter e historia."""
+
+    nombre: str
+    rango: str = ""
+    rasgos: list[Rasgo] = Field(default_factory=list)
+    historia: str = ""
+    # Lo que este personaje ha vivido en misiones anteriores de la campaña (lo más reciente al final).
+    recuerdos: list[str] = Field(default_factory=list)
+    femenina: bool = False
+
+    @field_validator("rasgos", mode="before")
+    @classmethod
+    def _rasgos(cls, valor: Any) -> Any:
+        if isinstance(valor, str):
+            valor = [valor]
+        if not isinstance(valor, list):
+            return valor
+        validos = {r.value for r in Rasgo}
+        limpios: list[str] = []
+        for v in valor:
+            texto = str(getattr(v, "value", v)).strip().lower()
+            texto = texto.rstrip("a") + "o" if texto.rstrip("a") + "o" in validos else texto
+            if texto in validos and texto not in limpios:
+                limpios.append(texto)
+        return limpios[:3]
+
+    @field_validator("historia", mode="before")
+    @classmethod
+    def _historia(cls, valor: Any) -> Any:
+        return valor[:300] if isinstance(valor, str) else valor
+
+    @property
+    def valor(self) -> float:
+        """Entre -0.5 y 0.5: cuánto aguanta antes de romper el contacto."""
+        return max(-0.5, min(0.5, sum(VALOR_RASGO[r] for r in self.rasgos)))
+
+    def tiene(self, *rasgos: Rasgo) -> bool:
+        return any(r in self.rasgos for r in rasgos)
+
+    def rasgo_texto(self, rasgo: Rasgo) -> str:
+        """El rasgo concordado con la persona: 'veterano' o 'veterana'."""
+        return rasgo.value[:-1] + "a" if self.femenina and rasgo.value.endswith("o") else rasgo.value
+
+    def presentacion(self) -> str:
+        nombre = f"{self.rango} {self.nombre}".strip()
+        caracter = ", ".join(self.rasgo_texto(r) for r in self.rasgos)
+        texto = f"{nombre} ({caracter})" if caracter else nombre
+        if self.historia:
+            texto += f". {self.historia.rstrip('.')}."
+        if self.recuerdos:
+            texto += " Recuerdas: " + " ".join(r.rstrip(".") + "." for r in self.recuerdos[-3:])
+        return texto
 
 
 class TipoObjetivo(str, Enum):
@@ -326,3 +407,49 @@ class MensajeChat(BaseModel):
     canal: str = "lado"
     tiempo: float = 0.0
     es_ia: bool = False
+
+
+# ---------------------------------------------------------------------------------- Zeus
+class GrupoNuevo(BaseModel):
+    """Grupo que Zeus hace aparecer en mitad de una misión (refuerzos)."""
+
+    id: str
+    indicativo: str
+    tipo: TipoUnidad = TipoUnidad.INFANTERIA
+    posicion: Posicion
+    efectivos: int = 6
+    armada: bool = False
+    capacidad: int = 0
+
+
+class GrupoGlobal(BaseModel):
+    id: str
+    indicativo: str
+    bando: str
+    tipo: TipoUnidad
+    posicion: Posicion
+    efectivos: int
+    efectivos_max: int
+    estado: EstadoUnidad
+    accion: TipoAccion | None = None
+    en_combate: bool = False
+
+
+class VistaGlobal(BaseModel):
+    """Lo que ve Zeus: toda la verdad del mundo, sin niebla de guerra."""
+
+    tiempo: float
+    duracion_max_s: float | None = None
+    bando_jugadores: str | None = None
+    grupos: list[GrupoGlobal] = Field(default_factory=list)
+    objetivos: dict[str, list[Objetivo]] = Field(default_factory=dict)
+    condiciones: Condiciones = Field(default_factory=Condiciones)
+    mapa: Mapa | None = None
+
+    def fuerza(self, bando: str) -> tuple[int, int]:
+        """(efectivos actuales, efectivos máximos) de las unidades de tierra de un bando."""
+        grupos = [g for g in self.grupos if g.bando == bando and not g.tipo.es_aerea]
+        return sum(g.efectivos for g in grupos), sum(g.efectivos_max for g in grupos)
+
+    def bandos(self) -> list[str]:
+        return sorted({g.bando for g in self.grupos} | set(self.objetivos))

@@ -86,3 +86,18 @@ def test_config_de_ejemplo_es_valida():
     raiz = Path(__file__).resolve().parents[1]
     config = cargar_config(raiz / "config" / "config.ejemplo.yaml")
     assert config.llm.modelo == "qwen3:8b" and config.memoria.reflexion
+
+
+def test_campana_de_zeus_desde_la_consola(capsys):
+    assert main(["campana", "nueva", "campaña", "de", "insurgencia", "con", "una", "emboscada",
+                 "--falso", "--semilla", "2"]) == 0
+    salida = capsys.readouterr().out
+    assert "Emboscada" in salida
+    assert main(["campana", "lista"]) == 0
+    assert "capítulo 1/" in capsys.readouterr().out
+    assert main(["campana", "jugar", "--falso", "--semilla", "2"]) == 0
+    salida = capsys.readouterr().out
+    assert "Zeus: " in salida and "MISIÓN TERMINADA" in salida
+    assert "Zeus, aquí" not in salida
+    assert main(["campana", "estado"]) == 0
+    assert "→ 2." in capsys.readouterr().out

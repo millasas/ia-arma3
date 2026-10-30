@@ -89,6 +89,13 @@ CREATE TABLE IF NOT EXISTS lecciones (
     actualizada TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_lecciones_rol ON lecciones(rol, campana, activa);
+CREATE TABLE IF NOT EXISTS campanas (
+    id TEXT PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    estado TEXT NOT NULL,
+    creada TEXT NOT NULL,
+    actualizada TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS habilidades (
     nombre TEXT PRIMARY KEY,
     estado TEXT NOT NULL,
@@ -432,6 +439,25 @@ class Memoria:
                 "actualizada = excluded.actualizada",
                 (nombre, json.dumps(estado), _ahora()),
             )
+
+    # ------------------------------------------------------------------ campañas de Zeus
+    def guardar_campana(self, id_campana: str, nombre: str, estado: dict[str, Any]) -> None:
+        ahora = _ahora()
+        with self._transaccion() as con:
+            con.execute(
+                "INSERT INTO campanas (id, nombre, estado, creada, actualizada) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, estado = excluded.estado, "
+                "actualizada = excluded.actualizada",
+                (id_campana, nombre, json.dumps(estado, ensure_ascii=False), ahora, ahora),
+            )
+
+    def cargar_campana(self, id_campana: str) -> dict[str, Any] | None:
+        filas = self._consulta("SELECT estado FROM campanas WHERE id = ?", (id_campana,))
+        return json.loads(filas[0]["estado"]) if filas else None
+
+    def campanas(self) -> list[dict[str, Any]]:
+        return [dict(f) for f in self._consulta(
+            "SELECT id, nombre, creada, actualizada FROM campanas ORDER BY actualizada DESC, creada DESC")]
 
     # ------------------------------------------------------------------ informes
     def estadisticas(self) -> dict[str, Any]:

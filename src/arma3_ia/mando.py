@@ -26,6 +26,7 @@ from .agentes import (
     ContextoAgentes,
     Enlace,
     LiderEscuadra,
+    OrdenMando,
     Piloto,
     ResultadoAgente,
     Saliente,
@@ -38,7 +39,8 @@ from .config import Config
 from .habilidades import Habilidades
 from .llm import ClienteLLM
 from .memoria import Memoria
-from .modelo import Accion, Evento, MensajeChat, Observacion, TipoAccion
+from .modelo import Accion, Evento, MensajeChat, Observacion, Persona, TipoAccion
+from .texto import normalizar
 
 log = logging.getLogger(__name__)
 
@@ -64,26 +66,37 @@ class CerebroBando:
         config: Config | None = None,
         memoria: Memoria | None = None,
         habilidades: Habilidades | None = None,
+        *,
+        con_mando: bool = True,
+        personas: dict[str, Persona] | None = None,
+        ordenes: dict[str, OrdenMando] | None = None,
+        persona_mando: Persona | None = None,
     ) -> None:
         self.bando = bando
         self.config = config or Config()
         self.perfil = perfil
         self.memoria = memoria
         self.habilidades = habilidades
+        # Sin mando, cada NPC actúa por su cuenta con la tarea que le dio Zeus.
+        self.con_mando = con_mando
+        self.personas = dict(personas or {})
+        self.ordenes_iniciales = dict(ordenes or {})
         self.radio = RedRadio(retardo_s=perfil.retardo_radio_s)
         self.ctx = ContextoAgentes.crear(
             llm, perfil, bando, self.config.agentes, memoria, self.config.llm
         )
-        self.comandante = Comandante(self.ctx, "mando", perfil.indicativo_mando)
+        self.comandante = Comandante(self.ctx, "mando", perfil.indicativo_mando, persona_mando)
         self.enlace = Enlace(self.ctx, "enlace", perfil.indicativo_enlace)
-        self.radio.registrar("mando", perfil.indicativo_mando, ALIAS_MANDO)
+        if con_mando:
+            self.radio.registrar("mando", perfil.indicativo_mando, ALIAS_MANDO)
         self.radio.registrar("enlace", perfil.indicativo_enlace, ALIAS_ENLACE)
         self.unidades: dict[str, AgenteUnidad] = {}
         self.caidos: dict[str, AgenteUnidad] = {}
 
     @property
     def agentes(self) -> list:
-        return [self.comandante, self.enlace, *self.unidades.values(), *self.caidos.values()]
+        mando = [self.comandante] if self.con_mando else []
+        return [*mando, self.enlace, *self.unidades.values(), *self.caidos.values()]
 
     def iniciar_mision(self, mision_id: int | None) -> None:
         self.ctx.mision_id = mision_id
@@ -112,15 +125,33 @@ class CerebroBando:
             if not u.operativa or u.id in self.caidos:
                 continue
             clase = Piloto if u.es_aerea else LiderEscuadra
-            self.unidades[u.id] = clase(self.ctx, u.id, u.indicativo)
+            agente = clase(self.ctx, u.id, u.indicativo, self.personas.get(u.id),
+                           "mando" if self.con_mando else None)
+            orden = self.ordenes_iniciales.get(u.id)
+            if orden is not None:
+                agente.asignar_orden(orden)
+            self.unidades[u.id] = agente
             self.radio.registrar(u.id, u.indicativo)
         for uid in [i for i in self.unidades if i not in presentes]:
             self.radio.dar_de_baja(uid)
             self.caidos[uid] = self.unidades.pop(uid)
 
+    def destinatario(self, texto: str) -> AgenteUnidad | None:
+        """El NPC al que se dirige un mensaje ("Baker, ¿cómo vais?", "Sargento Miller, ...")."""
+        inicio = f" {normalizar(texto)[:60]} "
+        mejor: tuple[int, AgenteUnidad] | None = None
+        for agente in self.unidades.values():
+            for nombre in agente.nombres():
+                if f" {nombre} " in inicio and (mejor is None or len(nombre) > mejor[0]):
+                    mejor = (len(nombre), agente)
+        return mejor[1] if mejor else None
+
     def _transmitir(self, de: str, salientes: Iterable[Saliente], tiempo: float) -> None:
         for s in salientes:
-            entregados = self.radio.enviar(de, s.para, s.texto, s.tipo, tiempo, s.datos)
+            para = s.para
+            if not self.con_mando and normalizar(para) in ALIAS_MANDO:
+                para = "todos"
+            entregados = self.radio.enviar(de, para, s.texto, s.tipo, tiempo, s.datos)
             if not entregados and s.tipo != TipoMensaje.GENERAL:
                 log.debug("Mensaje de %s a '%s' sin destinatario: %s", de, s.para, s.texto)
 
@@ -135,10 +166,22 @@ class CerebroBando:
                 if e.tipo == "aterrizaje":
                     self.habilidades.informar_aterrizaje(e.datos)
 
-        # 1. Jugadores
+        # 1. Jugadores: si nombran a un NPC le contesta él; si no, el operador de radio.
         jugadores = [m for m in chat if not m.es_ia]
-        if jugadores:
-            respuestas, salientes = await self.enlace.atender(jugadores, obs)
+        al_enlace = []
+        por_id = {u.id: u for u in obs.unidades}
+        for mensaje in jugadores:
+            agente = self.destinatario(mensaje.texto)
+            unidad = por_id.get(agente.id) if agente is not None else None
+            if agente is None or unidad is None:
+                al_enlace.append(mensaje)
+                continue
+            respuesta, salientes = await agente.charlar(mensaje, obs, unidad)
+            salida.chat.append(respuesta)
+            salida.decisiones += 1
+            self._transmitir(agente.id, salientes, t)
+        if al_enlace:
+            respuestas, salientes = await self.enlace.atender(al_enlace, obs)
             salida.chat.extend(respuestas)
             salida.decisiones += len(respuestas)
             self._transmitir("enlace", salientes, t)
@@ -146,7 +189,7 @@ class CerebroBando:
         # 2. Mando
         self.comandante.recibir(self.radio.recibir("mando", t))
         self.radio.recibir("enlace", t)
-        if self.comandante.necesita_decidir(obs):
+        if self.con_mando and self.comandante.necesita_decidir(obs):
             decision = await self.comandante.decidir(obs)
             self._transmitir("mando", self.comandante.mensajes_de_ordenes(decision, obs), t)
             salida.decisiones += 1
@@ -171,7 +214,7 @@ class CerebroBando:
         for uid in self.unidades:
             unidad = por_id.get(uid)
             if uid not in decididas and unidad is not None:
-                accion = reglas.reflejo(unidad, obs)
+                accion = reglas.reflejo(unidad, obs, self.personas.get(uid))
                 if accion is not None:
                     salida.acciones.append(accion)
 

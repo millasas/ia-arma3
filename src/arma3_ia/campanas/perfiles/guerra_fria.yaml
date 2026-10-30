@@ -11,6 +11,16 @@ bando_ia:
 enemigo:
   nombre: "Pacto de Varsovia"
   descripcion: "Fuerza numerosa con blindados y doctrina de avance en profundidad."
+  doctrina:
+    - "Avance en profundidad: presionar sin pausa con escalones sucesivos."
+    - "Concentrar blindados y artillería en el punto de ruptura."
+    - "Mantener el ritmo aunque cueste bajas; los rezagados se dejan atrás."
+  indicativo_mando: "Shtab"
+  indicativos:
+    infanteria: ["Berkut-1", "Volk-1", "Medved-1", "Sokol-1"]
+    motorizada: ["BMP-1", "BMP-2"]
+    blindado: ["T72-1", "T72-2"]
+    helicoptero: ["Krokodil-1", "Mi8-1"]
 estilo_comunicacion: >
   Radio analógica con disciplina estricta: mensajes cortos, códigos y cuadrículas leídas
   del mapa de papel. Sin GPS. Nada de tecnología posterior a 1985.

@@ -27,6 +27,8 @@ from ..modelo import (
     EstadoObjetivo,
     EstadoUnidad,
     Evento,
+    GrupoGlobal,
+    GrupoNuevo,
     MensajeChat,
     Objetivo,
     Observacion,
@@ -37,8 +39,9 @@ from ..modelo import (
     TipoObjetivo,
     TipoUnidad,
     UnidadPropia,
+    VistaGlobal,
 )
-from ..puente.interfaz import Mundo
+from ..puente.interfaz import ControlZeus, Mundo
 from . import enemigo
 from .escenario import Escenario, UnidadEscenario
 
@@ -68,6 +71,9 @@ PROB_IMPACTO = {
     TipoUnidad.BLINDADO: 0.20,
     TipoUnidad.HELICOPTERO: 0.18,
 }
+# Cada impacto daña los vehículos de tierra; a partir de INMOVILIZADO ya no se mueven (ruedas, motor).
+DANO_VEHICULO = {TipoUnidad.MOTORIZADA: 0.25, TipoUnidad.BLINDADO: 0.05}
+INMOVILIZADO = 0.5
 COBERTURA_TERRENO = {"urbano": 0.5, "bosque": 0.4, "colina": 0.25, "setos": 0.35}
 OCULTACION_TERRENO = {"urbano": 0.6, "bosque": 0.5, "colina": 0.85, "setos": 0.6}
 DETECTABILIDAD_POSTURA = {Postura.SIGILO: 0.5, Postura.NORMAL: 1.0, Postura.COMBATE: 1.25}
@@ -76,6 +82,8 @@ CONSUMO_COMBUSTIBLE_S = 0.01 / 30.0
 OLVIDO_CONTACTO_S = 300.0
 RADIO_ZONA_CALIENTE = 500.0
 DISTANCIA_EMBARQUE = 80.0
+VISIBILIDAD_HORA = {"dia": 1500.0, "amanecer": 1000.0, "atardecer": 1000.0, "noche": 500.0}
+FACTOR_CLIMA = {"despejado": 1.0, "nubes": 0.9, "lluvia": 0.7, "niebla": 0.4}
 
 
 @dataclass
@@ -146,7 +154,7 @@ class ContactoSim:
     identificado: bool
 
 
-class SimuladorTexto(Mundo):
+class SimuladorTexto(Mundo, ControlZeus):
     def __init__(
         self,
         escenario: Escenario,
@@ -173,7 +181,9 @@ class SimuladorTexto(Mundo):
         self.bandos_ia = escenario.bandos_ia
         if not self.bandos_ia:
             raise ValueError("El escenario necesita al menos un bando con controlador: ia")
-        self.bando_principal = self.bandos_ia[0]
+        jugadores = escenario.bando_jugadores
+        self.bando_principal = jugadores if jugadores in self.bandos_ia else self.bandos_ia[0]
+        self.anuncios: list[MensajeChat] = []
 
         for nombre, bando in escenario.bandos.items():
             self.objetivos[nombre] = [o.model_copy(deep=True) for o in bando.objetivos]
@@ -365,6 +375,55 @@ class SimuladorTexto(Mundo):
             self._resultado = self._calcular_resultado(estado, motivo)
         return self._resultado
 
+    # ------------------------------------------------------------------ poderes de Zeus
+    def vista_global(self) -> VistaGlobal:
+        return VistaGlobal(
+            tiempo=self.tiempo,
+            duracion_max_s=self.escenario.duracion_max_s,
+            bando_jugadores=self.bando_principal,
+            grupos=[
+                GrupoGlobal(id=u.id, indicativo=u.indicativo, bando=u.bando, tipo=u.tipo, posicion=u.pos,
+                            efectivos=u.efectivos, efectivos_max=u.efectivos_max, estado=u.estado,
+                            accion=u.accion, en_combate=u.en_contacto or u.bajo_fuego)
+                for u in self.unidades.values()
+            ],
+            objetivos={b: [o.model_copy() for o in objs] for b, objs in self.objetivos.items()},
+            condiciones=self.escenario.condiciones.model_copy(),
+            mapa=self.escenario.mapa,
+        )
+
+    async def crear_grupo(self, bando: str, grupo: GrupoNuevo) -> str:
+        if bando not in self.escenario.bandos:
+            raise ValueError(f"bando desconocido: {bando}")
+        uid = grupo.id
+        n = 2
+        while uid in self.unidades:
+            uid, n = f"{grupo.id}_{n}", n + 1
+        mapa = self.escenario.mapa
+        datos = UnidadEscenario(id=uid, indicativo=grupo.indicativo, tipo=grupo.tipo,
+                                posicion=grupo.posicion.limitar(mapa.ancho_m, mapa.alto_m),
+                                efectivos=grupo.efectivos, armada=grupo.armada, capacidad=grupo.capacidad)
+        self.unidades[uid] = self._crear_unidad(datos, bando, grupo.indicativo)
+        if not grupo.tipo.es_aerea:
+            # Los refuerzos no cuentan como bajas evitadas: se suman a los efectivos iniciales.
+            self.efectivos_iniciales[bando] = self.efectivos_iniciales.get(bando, 0) + grupo.efectivos
+        self._evento(bando, "refuerzos", f"Llegan refuerzos: {grupo.indicativo} en {datos.posicion.cuadricula()}",
+                     uid)
+        return uid
+
+    async def cambiar_condiciones(self, hora: str | None = None, clima: str | None = None) -> None:
+        c = self.escenario.condiciones
+        nuevas = c.model_copy(update={k: v for k, v in (("hora", hora), ("clima", clima)) if v})
+        nuevas.visibilidad_m = VISIBILIDAD_HORA.get(nuevas.hora, 1500.0) * FACTOR_CLIMA.get(nuevas.clima, 1.0)
+        self.escenario.condiciones = nuevas
+        for bando in self.bandos:
+            self._evento(bando, "condiciones", f"Cambian las condiciones: {nuevas.hora}, {nuevas.clima}")
+
+    async def anunciar(self, texto: str) -> None:
+        mensaje = MensajeChat(autor="Zeus", texto=texto, canal="global", tiempo=self.tiempo, es_ia=True)
+        self.anuncios.append(mensaje)
+        self.chat_log.append(mensaje)
+
     # ------------------------------------------------------------------ órdenes
     def aplicar(self, bando: str, a: Accion) -> ResultadoAccion:
         u = self._resolver_unidad(bando, a.unidad)
@@ -469,10 +528,15 @@ class SimuladorTexto(Mundo):
             return
         if u.destino is None:
             return
+        if u.tipo in DANO_VEHICULO and u.danos >= INMOVILIZADO:
+            return
         distancia = u.pos.distancia(u.destino)
         if u.accion == TipoAccion.DEFENDER and distancia < 30:
             return
-        velocidad = VELOCIDAD[u.tipo] * FACTOR_POSTURA[u.postura] * (0.5 if u.bajo_fuego else 1.0)
+        velocidad = VELOCIDAD[u.tipo] * FACTOR_POSTURA[u.postura]
+        if u.bajo_fuego:
+            # Un vehículo tiroteado frena, maniobra y desembarca a medias: no cruza la emboscada a toda velocidad.
+            velocidad *= 0.5 if u.tipo == TipoUnidad.INFANTERIA else 0.15
         if u.tipo != TipoUnidad.INFANTERIA and self.terreno(u.pos) in ("bosque", "urbano"):
             velocidad *= 0.5
         avance = velocidad * dt
@@ -715,6 +779,11 @@ class SimuladorTexto(Mundo):
             preferido = next(
                 (b for _, b in candidatos if conocidos[b.id].etiqueta == (a.objetivo or "")), None
             )
+            if preferido is None or (preferido.tipo in DANO_VEHICULO and preferido.danos >= INMOVILIZADO):
+                # Un vehículo ya inutilizado no se va a escapar: se dispara antes al que aún se mueve.
+                movil = next((b for _, b in sorted(candidatos, key=lambda x: x[0])
+                              if b.tipo in DANO_VEHICULO and b.danos < INMOVILIZADO), None)
+                preferido = movil or preferido
             d, b = (preferido.pos.distancia(a.pos), preferido) if preferido else min(candidatos, key=lambda x: x[0])
             sorpresa = a.id not in self.contactos[b.bando]
             p = PROB_IMPACTO[a.tipo] * max(0.15, 1 - d / (alcance * 1.15))
@@ -752,6 +821,13 @@ class SimuladorTexto(Mundo):
                             self._desembarcar(b)
                         self._destruir(b, "derribado")
                 continue
+            if impactos and b.tipo in DANO_VEHICULO:
+                antes = b.danos
+                # La primera ráfaga de una emboscada va a por los motores y las ruedas.
+                b.danos = min(1.0, b.danos + DANO_VEHICULO[b.tipo] * impactos * (2 if sorpresa else 1))
+                if antes < INMOVILIZADO <= b.danos:
+                    self._evento(b.bando, "inmovilizado",
+                                 f"{b.indicativo} tiene los vehículos inutilizados y ya no puede moverse", b.id)
             self._aplicar_bajas(b, impactos, causante=a, sorpresa=sorpresa)
 
         for u in self.unidades.values():
@@ -872,6 +948,12 @@ class SimuladorTexto(Mundo):
             self._resultado = self._calcular_resultado("victoria", "objetivos cumplidos")
         elif any(o.estado == EstadoObjetivo.FALLIDO for o in obligatorios):
             self._resultado = self._calcular_resultado("derrota", "un objetivo obligatorio ha fallado")
+        elif any(
+            rivales and all(o.estado == EstadoObjetivo.COMPLETADO for o in rivales)
+            for b in self.bandos if b != bando
+            for rivales in [[o for o in self.objetivos[b] if o.obligatorio]]
+        ):
+            self._resultado = self._calcular_resultado("derrota", "el enemigo ha cumplido su objetivo")
         elif not any(not u.es_aerea for u in self.operativas(bando)):
             self._resultado = self._calcular_resultado("derrota", "todas las unidades de tierra destruidas")
         elif self.tiempo >= self.escenario.duracion_max_s:

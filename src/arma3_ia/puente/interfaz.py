@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..modelo import Accion, MensajeChat, Observacion, ResultadoAccion, ResultadoMision
+from ..modelo import Accion, GrupoNuevo, MensajeChat, Observacion, ResultadoAccion, ResultadoMision, VistaGlobal
 
 
 class Mundo(ABC):
@@ -53,3 +53,27 @@ class Mundo(ABC):
     @abstractmethod
     def finalizar(self, motivo: str) -> ResultadoMision:
         """Termina la misión ahora (p. ej. al interrumpirla) y devuelve el resultado."""
+
+
+class ControlZeus(ABC):
+    """Los poderes de Zeus (el director de juego): ver todo el mundo y cambiarlo en directo.
+
+    El simulador los implementa; en ARMA 3 corresponderán a órdenes de la extensión
+    (createGroup/createUnit, setOvercast/skipTime, mensajes globales).
+    """
+
+    @abstractmethod
+    def vista_global(self) -> VistaGlobal:
+        """Toda la verdad del mundo, sin niebla de guerra."""
+
+    @abstractmethod
+    async def crear_grupo(self, bando: str, grupo: GrupoNuevo) -> str:
+        """Hace aparecer un grupo y devuelve su id."""
+
+    @abstractmethod
+    async def cambiar_condiciones(self, hora: str | None = None, clima: str | None = None) -> None:
+        """Cambia la hora del día o el clima."""
+
+    @abstractmethod
+    async def anunciar(self, texto: str) -> None:
+        """Mensaje de Zeus a todos los jugadores."""

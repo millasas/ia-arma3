@@ -10,6 +10,14 @@ bando_ia:
 enemigo:
   nombre: "Insurgentes"
   descripcion: "Guerrilla que embosca y desaparece entre la población y el terreno."
+  doctrina:
+    - "Golpear y desaparecer: emboscadas cortas y retirada antes de que llegue la QRF."
+    - "Usar el terreno y los pueblos para esconderse; evitar el combate abierto."
+    - "Atacar convoyes y patrullas aisladas, nunca posiciones fuertes."
+  indicativo_mando: "El Emir"
+  indicativos:
+    infanteria: ["Halcón Negro", "Escorpión", "Víbora", "Chacal"]
+    motorizada: ["Técnica-1", "Técnica-2"]
 estilo_comunicacion: >
   Procedimiento de radio militar, breve y profesional. Se usan indicativos, cuadrículas
   de 6 cifras y los nombres de los pueblos y accidentes del terreno.

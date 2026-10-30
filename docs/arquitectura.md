@@ -1,5 +1,47 @@
 # Arquitectura del núcleo
 
+## Una sola IA para todos los papeles
+
+```
+  encargo del anfitrión ("crea una campaña de insurgencia...")
+            │
+            ▼
+   Zeus (zeus/director.py) ── PlanCampana ──► EstadoCampana (capítulos, personajes, dificultad) ──► SQLite
+            │                                         ▲
+            │ PlanMision ─► construir_escenario ─► Escenario (bandos, unidades con persona y orden, objetivos)
+            ▼                                         │
+   DirectorPartida ── vista global, refuerzos, hora, clima, avisos ──► Mundo (simulador o ARMA 3)
+            ▲                                         │
+   "Zeus, ..." en el chat                             ▼
+                                  CerebroBando por bando (los dos los lleva la IA)
+                                  · comandante opcional · líderes con persona · pilotos · enlace
+                                  · "Miller, ¿cómo vais?" ─► el NPC contesta en personaje
+```
+
+El mismo modelo hace de Zeus, de comandante, de cada NPC y de operador de radio. Lo que cambia
+es el **rol** (prompt y esquema de respuesta), la **persona** (nombre, rango, rasgos, historia
+y recuerdos) y las **lecciones** que se recuperan de la memoria para ese rol. Todas las
+decisiones quedan en la misma base de datos, así que el conjunto se puede exportar para ajustar
+un único modelo (LoRA) que mejore en todos los papeles a la vez.
+
+- **Zeus** (`zeus/`): `crear_campana` escribe la campaña; `preparar_mision` escribe un
+  `PlanMision` y `construir_escenario` lo valida y repara (lugares inexistentes, unidades
+  repetidas, helicópteros en épocas sin ellos, bandos que faltan) y da al enemigo objetivos
+  espejo. Si el modelo falla, hay plantillas por tipo de misión (asalto, defensa, emboscada,
+  rescate, reconocimiento, destrucción). `cerrar_mision` mata o hace recordar a los personajes,
+  recluta sustitutos, ajusta la dificultad, inserta un capítulo de contraataque si se pierde y
+  guarda una lección de equilibrio con el rol `zeus`.
+- **DirectorPartida**: cada `cada_s` segundos mira la vista global y decide si intervenir; los
+  mensajes del chat que empiezan por "Zeus", "director" o "dios" son órdenes suyas.
+- **NPC con persona**: los rasgos mueven los umbrales de ruptura (un valiente aguanta más bajas,
+  un nervioso se retira antes) y la agresividad (un agresivo ataca contactos cercanos aunque no
+  tenga orden). Tareas `patrullar` (con ruta) y `emboscar` (esperar en sigilo y abrir fuego
+  cuando el enemigo entra en alcance).
+- **ControlZeus** (`puente/interfaz.py`): lo que el mundo debe ofrecer al director —
+  `vista_global`, `crear_grupo`, `cambiar_condiciones`, `anunciar`—. En ARMA 3 se traducirá a
+  `createGroup`/`createUnit`, `skipTime`/`setOvercast`/`setFog` y `systemChat`/`globalChat`.
+
+
 ```
                        ┌───────────────────────── CerebroBando (mando.py) ─────────────────────────┐
  chat de jugadores ──► │ Enlace ──radio──► Comandante ──órdenes por radio──► Líderes / Pilotos     │ ──► acciones
@@ -27,7 +69,8 @@
 | `campanas/`            | Perfiles de campaña en YAML: época, doctrina, restricciones, tono de radio, indicativos. |
 | `simulador/`           | Mundo de texto determinista para probar todo sin ARMA: movimiento, detección con niebla de guerra, combate, helicópteros, objetivos y enemigo por guion. |
 | `puente/`              | Interfaz `Mundo` y protocolo JSON para el futuro puente con ARMA 3 (ver `protocolo-puente.md`). |
-| `partida.py`           | Bucle mundo ↔ cerebros, registro en memoria y reflexión final. |
+| `zeus/`                | Director de juego: campañas, planes de misión, construcción de escenarios, intervenciones en directo y estado persistente de la campaña. |
+| `partida.py`           | Bucle mundo ↔ cerebros (con Zeus opcional), registro en memoria y reflexión final. |
 
 ## Decisiones de diseño
 

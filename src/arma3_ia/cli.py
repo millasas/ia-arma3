@@ -32,9 +32,10 @@ from .llm import ClienteLLM, ClienteOllama, LLMFalso, MensajeLLM, crear_cliente,
 from .mando import CerebroBando, SalidaCerebro
 from .memoria import Memoria, Reflexion
 from .modelo import MensajeChat, Observacion
-from .partida import InformePartida, Partida
-from .simulador import SimuladorTexto, cargar_escenario, escenarios_disponibles, mapa_ascii
+from .partida import InformePartida, Partida, preparar_cerebros
+from .simulador import Escenario, SimuladorTexto, cargar_escenario, escenarios_disponibles, mapa_ascii
 from .texto import recortar, reloj
+from .zeus import DirectorPartida, EstadoCampana, Zeus
 
 COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 COLORES = {"gris": "90", "rojo": "31", "verde": "32", "amarillo": "33", "azul": "34", "cian": "36", "negrita": "1"}
@@ -120,6 +121,21 @@ def _imprimir_paso(sim: SimuladorTexto, salidas: dict[str, SalidaCerebro], detal
                 print(c(f"[{reloj(m.tiempo)}] 💬 {m.autor}: {m.texto}", "amarillo"))
 
 
+def _imprimir_fuerzas(escenario: Escenario) -> None:
+    for nombre, bando in escenario.bandos.items():
+        if not any(u.persona or u.orden for u in bando.unidades):
+            continue
+        cabecera = f"{bando.nombre or nombre} ({nombre})"
+        cabecera += "" if bando.mando else " — sin mando: cada grupo va a su aire"
+        print(c(cabecera, "negrita"))
+        if bando.comandante:
+            print(f"   Al mando: {bando.comandante.presentacion()}")
+        for u in bando.unidades:
+            quien = f" — {u.persona.presentacion()}" if u.persona else (" — jugadores" if u.jugadores else "")
+            tarea = f" [{u.orden.tarea.value}]" if u.orden else ""
+            print(f"   {u.indicativo} ({u.tipo.value}, {u.efectivos}){tarea}{quien}")
+
+
 def _imprimir_informe(informe: InformePartida) -> None:
     r = informe.resultado
     color = "verde" if r.estado == "victoria" else "amarillo" if r.estado == "parcial" else "rojo"
@@ -140,7 +156,7 @@ def _imprimir_informe(informe: InformePartida) -> None:
 
 async def _jugar_mision(
     config: Config,
-    escenario_id: str,
+    escenario_id: str | Escenario,
     perfil: PerfilCampana | None,
     llm: ClienteLLM,
     memoria: Memoria,
@@ -153,14 +169,19 @@ async def _jugar_mision(
     interactivo: bool = False,
     cada_mapa: int = 0,
     max_pasos: int | None = None,
+    zeus: Zeus | None = None,
+    zeus_automatico: bool = True,
 ) -> InformePartida:
-    escenario = cargar_escenario(escenario_id)
+    escenario = escenario_id if isinstance(escenario_id, Escenario) else cargar_escenario(escenario_id)
     perfil = perfil or cargar_perfil(escenario.perfil_recomendado)
     habilidades = Habilidades(memoria, explorar=explorar, semilla=semilla)
     sim = SimuladorTexto(escenario, perfil, semilla=semilla)
-    cerebros = {
-        bando: CerebroBando(bando, llm, perfil, config, memoria, habilidades) for bando in escenario.bandos_ia
-    }
+    cerebros = preparar_cerebros(escenario, llm, perfil, config, memoria, habilidades)
+    director = (
+        DirectorPartida(zeus, sim, cerebros, escenario, perfil, automatico=zeus_automatico, semilla=semilla)
+        if zeus is not None else None
+    )
+    vistos = {"anuncios": 0}
     reflexion = (
         Reflexion(llm, memoria, perfil, umbral_exito=config.memoria.umbral_exito)
         if reflexionar and config.memoria.reflexion
@@ -171,10 +192,14 @@ async def _jugar_mision(
         if not mostrar:
             return
         _imprimir_paso(sim, salidas, detalle)
+        for anuncio in sim.anuncios[vistos["anuncios"]:]:
+            print(c(f"[{reloj(anuncio.tiempo)}] ⚡ Zeus: {anuncio.texto}", "azul"))
+        vistos["anuncios"] = len(sim.anuncios)
         if cada_mapa and paso % cada_mapa == 0:
             print(mapa_ascii(sim, sim.bando_principal))
         if interactivo and not sim.terminado():
-            texto = await asyncio.to_thread(input, c("Tú (Enter = seguir, 'mapa', 'salir'): ", "negrita"))
+            texto = await asyncio.to_thread(
+                input, c("Tú (Enter = seguir, 'mapa', 'salir', 'Zeus, ...' o habla con un NPC): ", "negrita"))
             texto = texto.strip()
             if texto.lower() == "salir":
                 sim.finalizar("interrumpida por el jugador")
@@ -186,9 +211,11 @@ async def _jugar_mision(
     if mostrar:
         print(c(f"=== {escenario.nombre} | campaña: {perfil.nombre} | modelo: {llm.nombre_modelo} ===", "negrita"))
         print(escenario.descripcion.strip())
+        _imprimir_fuerzas(escenario)
         print(mapa_ascii(sim, sim.bando_principal))
     partida = Partida(sim, cerebros, memoria=memoria, reflexion=reflexion, habilidades=habilidades,
-                      campana=perfil.id, escenario=escenario.id, max_pasos=max_pasos, al_paso=al_paso)
+                      campana=perfil.id, escenario=escenario.id, max_pasos=max_pasos, al_paso=al_paso,
+                      director=director)
     informe = await partida.jugar()
     if mostrar:
         print(mapa_ascii(sim))
@@ -299,6 +326,87 @@ async def orden_chat(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------------- campañas (Zeus)
+def _campana_actual(zeus: Zeus, id_campana: str | None) -> EstadoCampana:
+    if id_campana:
+        return zeus.cargar(id_campana)
+    assert zeus.memoria is not None
+    campanas = zeus.memoria.campanas()
+    if not campanas:
+        raise KeyError("Todavía no hay campañas. Crea una con: arma3-ia campana nueva \"...\"")
+    return zeus.cargar(campanas[0]["id"])
+
+
+def _imprimir_campana(estado: EstadoCampana) -> None:
+    plan = estado.plan
+    print(c(f"=== {plan.nombre} ({estado.id}) ===", "negrita"))
+    print(plan.premisa)
+    print(f"Época: {plan.perfil} | {plan.nombre_jugadores} contra {plan.nombre_enemigo} | "
+          f"dificultad {estado.dificultad:.2f}")
+    for i, cap in enumerate(plan.capitulos):
+        hecho = next((r for r in estado.historial if r.capitulo == i), None)
+        marca = (c("✓", "verde") if hecho and hecho.estado == "victoria" else c("✗", "rojo") if hecho
+                 else c("→", "amarillo") if i == estado.capitulo else " ")
+        resultado = f" — {hecho.estado} ({hecho.puntuacion:.2f})" if hecho else ""
+        print(f" {marca} {i + 1}. {cap.titulo} [{cap.tipo.value}]{resultado}")
+        print(f"      {cap.sinopsis}")
+    print(c("Personajes:", "negrita"))
+    for p in estado.personajes:
+        print(f"   {'' if p.vivo else '✝ '}{p.persona.presentacion()}")
+    if estado.antagonista:
+        print(c("Antagonista: ", "negrita") + estado.antagonista.presentacion())
+    if estado.terminada:
+        print(c("Campaña terminada.", "verde"))
+
+
+async def orden_campana(args: argparse.Namespace, config: Config) -> int:
+    llm = _llm(config, getattr(args, "falso", False))
+    memoria = Memoria(config.memoria.ruta_db)
+    zeus = Zeus(llm, memoria, semilla=getattr(args, "semilla", None))
+    try:
+        if args.accion == "nueva":
+            print("Zeus está imaginando la campaña...")
+            estado = await zeus.crear_campana(" ".join(args.encargo))
+            _imprimir_campana(estado)
+            print(f"\nPara jugar el primer capítulo: arma3-ia campana jugar {estado.id}")
+        elif args.accion == "lista":
+            for fila in memoria.campanas():
+                estado = zeus.cargar(fila["id"])
+                total = len(estado.plan.capitulos)
+                print(f"{fila['id']:32s} {estado.plan.nombre} — capítulo {min(estado.capitulo + 1, total)}/{total}"
+                      f"{' (terminada)' if estado.terminada else ''}")
+        elif args.accion == "estado":
+            _imprimir_campana(_campana_actual(zeus, args.id))
+        elif args.accion == "jugar":
+            estado = _campana_actual(zeus, args.id)
+            while not estado.terminada:
+                capitulo = estado.capitulo_actual
+                assert capitulo is not None
+                print(c(f"\nZeus prepara el capítulo {estado.capitulo + 1}: {capitulo.titulo}...", "negrita"))
+                mision = await zeus.preparar_mision(estado)
+                for aviso in mision.avisos:
+                    print(c(f"  (Zeus corrige: {aviso})", "gris"))
+                informe = await _jugar_mision(
+                    config, mision.escenario, zeus.perfil(estado), llm, memoria,
+                    semilla=args.semilla, explorar=config.habilidades.explorar, reflexionar=True,
+                    detalle=args.detalle, interactivo=args.interactivo, cada_mapa=args.mapa,
+                    max_pasos=args.max_pasos, zeus=zeus, zeus_automatico=not args.sin_intervenciones,
+                )
+                cambios = await zeus.cerrar_mision(estado, mision.escenario, informe.resultado,
+                                                   mision_id=informe.mision_id, resumen=informe.resumen)
+                print(c("Lo que cambia en la campaña:", "negrita"))
+                for cambio in cambios or ["Nada especial: la historia sigue."]:
+                    print(f"  · {cambio}")
+                if not args.todas:
+                    break
+            if estado.terminada:
+                _imprimir_campana(estado)
+    finally:
+        await llm.cerrar()
+        memoria.cerrar()
+    return 0
+
+
 # ---------------------------------------------------------------------------------- consultas
 async def orden_lecciones(args: argparse.Namespace, config: Config) -> int:
     memoria = Memoria(config.memoria.ruta_db)
@@ -377,6 +485,28 @@ def crear_parser() -> argparse.ArgumentParser:
     p.add_argument("--sin-reflexion", action="store_true", help="no analiza la misión al terminar")
     p.add_argument("--max-pasos", type=int, help="detiene la misión tras N pasos")
     p.set_defaults(funcion=orden_simular)
+
+    p = sub.add_parser("campana", help="Zeus: crea y dirige campañas completas")
+    acciones = p.add_subparsers(dest="accion", required=True)
+    q = acciones.add_parser("nueva", help="crea una campaña a partir de un encargo")
+    q.add_argument("encargo", nargs="+", help='p. ej. "una campaña de 1944 sobre la defensa de un puente"')
+    q.add_argument("--falso", action="store_true", help="usa el LLM falso (sin GPU ni Ollama)")
+    q.add_argument("--semilla", type=int)
+    q = acciones.add_parser("jugar", help="juega el siguiente capítulo (Zeus lo prepara y lo dirige)")
+    q.add_argument("id", nargs="?", help="id de la campaña (por defecto la última)")
+    q.add_argument("--todas", action="store_true", help="juega todos los capítulos que quedan")
+    q.add_argument("--falso", action="store_true")
+    q.add_argument("--semilla", type=int)
+    q.add_argument("--interactivo", action="store_true",
+                   help="escribe en el chat entre pasos: 'Zeus, que llueva' o 'Baker, ¿cómo vais?'")
+    q.add_argument("--mapa", type=int, default=0, metavar="N")
+    q.add_argument("--detalle", action="store_true")
+    q.add_argument("--max-pasos", type=int)
+    q.add_argument("--sin-intervenciones", action="store_true", help="Zeus solo actúa cuando se lo pides")
+    q = acciones.add_parser("estado", help="capítulos, personajes e historial de una campaña")
+    q.add_argument("id", nargs="?")
+    acciones.add_parser("lista", help="campañas guardadas")
+    p.set_defaults(funcion=orden_campana)
 
     p = sub.add_parser("autoentrenar", help="encadena misiones para que la IA aprenda sola")
     p.add_argument("--misiones", type=int, default=10)

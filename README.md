@@ -1,32 +1,63 @@
 # IA para ARMA 3
 
-IA local y multiagente para ARMA 3 que corre en un PC dedicado con un modelo de lenguaje
-pequeño (7-8B) en Ollama. Un **comandante** planifica la misión, los **líderes de escuadra** y
-los **pilotos** deciden cada uno por su cuenta y se coordinan por radio, y un **enlace** habla
-con los jugadores por el chat. Después de cada misión la IA escribe un informe post-acción y
-**aprende lecciones** que usa en las siguientes, y adapta su forma de luchar y de hablar a la
-**campaña** (moderna, 1944, insurgencia…).
+Una IA local que hace de **Zeus** en ARMA 3 y, a la vez, es **cada uno de los NPC**. Corre en un
+PC dedicado con un modelo de lenguaje pequeño (7-8B) en Ollama.
 
-Esta primera fase es solo **el núcleo de la IA**. Todavía no se conecta a ARMA 3: se prueba en
-un **simulador de texto** incluido. El puente con el juego es el siguiente paso y ya tiene su
-interfaz y su protocolo definidos ([docs/protocolo-puente.md](docs/protocolo-puente.md)).
+Tú solo le pides una campaña:
+
+```bash
+arma3-ia campana nueva "una campaña de insurgencia por el control de un río, con una emboscada a un convoy"
+arma3-ia campana jugar --interactivo
+```
+
+y la IA:
+
+1. **Escribe la campaña**: historia, capítulos, personajes con nombre y carácter, y un antagonista.
+2. **Prepara cada misión** como haría un Zeus: dónde está cada grupo, qué objetivos tiene cada
+   bando, la hora y el clima. El enemigo también tiene su propio plan.
+3. **Dirige la partida en directo**: manda refuerzos si los jugadores van sobrados, da un respiro
+   si están al límite, hace caer la noche... y obedece al anfitrión por el chat
+   (`Zeus, que llueva`, `Zeus, manda 2 tanques enemigos`).
+4. **Es cada NPC**: cada grupo, aliado o enemigo, tiene un jefe con nombre, rasgos (veterano,
+   nervioso, impulsivo...) e historia, y decide por su cuenta según su orden, lo que ve y su
+   carácter. Puedes hablarle por su nombre (`Sargento Miller, ¿cómo lo veis?`) y te contesta
+   como esa persona.
+5. **Recuerda y aprende**: los personajes recuerdan lo que han vivido y pueden morir; la
+   dificultad se ajusta según cómo te va; una derrota cambia la historia (aparece un capítulo
+   nuevo); y cada rol (Zeus, mandos, NPC, pilotos) guarda lecciones que usa en las misiones
+   siguientes.
+
+Es **un solo modelo** que interpreta todos los papeles: cambia el prompt, la memoria y las
+lecciones según a quién le toque decidir. Por eso todo lo que aprende se guarda en la misma base
+de datos y se puede exportar para ajustar ese modelo (LoRA) más adelante.
+
+Todavía no se conecta a ARMA 3: se prueba en un **simulador de texto** incluido. El puente con
+el juego es el siguiente paso y ya tiene su interfaz y su protocolo definidos
+([docs/protocolo-puente.md](docs/protocolo-puente.md)).
 
 ```
-[00:00] 📻 Centinela [a Ángel-1] Ángel-1, aquí Centinela: transporte a Patrulla-2 hasta 006006.
-[00:00] 📻 Centinela [a Patrulla-2] Patrulla-2, aquí Centinela: embarque en Ángel-1. Ángel-1 os llevará a 006006.
-[00:00] 📻 Ángel-1 [a Centinela] En camino para recoger a Patrulla-2.
-[00:30] Patrulla-2 detecta C1: infantería (~5) en 035034, 350 m al SE
-[00:30] 💬 Centinela-Radio: Teniente Vega, aquí Centinela-Radio. Recibido, lo transmito al mando.
-...
-=== MISIÓN TERMINADA: VICTORIA (objetivos cumplidos) ===
-  + Nueva lección (piloto): Aterrizaje en una LZ con enemigos cerca: No aterrizar con contactos
-    a menos de 500 m: elegir una LZ alternativa más alejada o pedir apoyo para limpiar la zona antes.
+=== La lucha por Kalat (la_lucha_por_kalat) ===
+ → 1. Emboscada en Kalat [emboscada]
+[00:00] ⚡ Zeus: Emboscada en Kalat: Un convoy enemigo pasará cerca de Kalat. No debe llegar a su destino.
+[03:00] Able detecta C1: motorizada (~4) en 025029, 250 m al NE
+[03:00] Gruppe Anton tiene los vehículos inutilizados y ya no puede moverse
+[10:00] ⚡ Zeus: refuerzos enemigos: Se oyen motores acercándose desde el noreste...
+Lo que cambia en la campaña:
+  · Sargento Walt Russo (veterano, prudente) ha caído en «Contraataque tras «Asalto a Cota 112»».
+  · Ha sido duro: la próxima misión dará algo de respiro (dificultad 0.80).
+  · La derrota cambia la historia: nuevo capítulo «Contraataque tras «Emboscada en Kalat»».
 ```
 
 ## Qué incluye
 
-- **Agentes**: comandante, líderes de escuadra, pilotos de helicóptero (transporte, escolta,
-  apoyo aéreo) y enlace con los jugadores. Deciden en paralelo y se hablan por una red de radio
+- **Zeus**: crea campañas y misiones a partir de un encargo en lenguaje normal, interviene
+  durante la partida y obedece órdenes por el chat. Guarda cada campaña y la continúa donde se
+  dejó.
+- **NPC con personalidad**: rasgos que cambian cómo aguantan y cómo atacan, historia, recuerdos
+  de misiones anteriores y conversación en personaje.
+- **Agentes**: comandante (opcional por bando), líderes de escuadra, pilotos de helicóptero
+  (transporte, escolta, apoyo aéreo) y enlace con los jugadores. Tareas de patrulla con ruta y
+  emboscada. Los dos bandos los lleva la IA, cada uno con su doctrina. Deciden en paralelo y se hablan por una red de radio
   con indicativos y retardo según la época.
 - **Nunca se congela**: si el modelo falla, responde mal o tarda demasiado, decide la doctrina
   por reglas y la partida sigue.
@@ -35,7 +66,7 @@ interfaz y su protocolo definidos ([docs/protocolo-puente.md](docs/protocolo-pue
   olvidan, habilidad de aterrizaje que mejora practicando y exportación de datos para un LoRA.
 - **Perfiles de campaña**: `moderno`, `ww2`, `insurgencia`, `contrainsurgencia`, `guerra_fria`.
 - **Simulador de texto** con niebla de guerra, combate, helicópteros, objetivos y 4 escenarios.
-- **Pruebas sin GPU**: 108 tests con un LLM falso y un servidor que imita la API de Ollama.
+- **Pruebas sin GPU**: 136 tests con un LLM falso y un servidor que imita la API de Ollama.
 
 Detalles en [docs/arquitectura.md](docs/arquitectura.md).
 
@@ -111,6 +142,28 @@ variable `ARMA3IA_LLM_MODELO`).
 
 ## Uso
 
+### Campañas con Zeus (lo principal)
+
+```bash
+arma3-ia campana nueva "campaña de la segunda guerra mundial en Normandía"   # Zeus la escribe
+arma3-ia campana jugar --interactivo        # juega el capítulo actual; tú escribes en el chat
+arma3-ia campana jugar --todas              # juega todos los capítulos que quedan seguidos
+arma3-ia campana estado                     # capítulos, personajes vivos y caídos, dificultad
+arma3-ia campana lista                      # todas las campañas guardadas
+```
+
+En el chat interactivo:
+
+- `Zeus, que se haga de noche` / `Zeus, manda refuerzos enemigos` / `Zeus, anuncia que llega
+  la artillería`: órdenes al director de juego.
+- `Miller, ¿cómo vais?` o `Able, ¿qué veis?`: habla directamente con ese NPC.
+- Cualquier otra cosa la recibe el operador de radio de tu bando.
+
+`--sin-intervenciones` desactiva las intervenciones automáticas de Zeus (solo obedece).
+Con `--falso` todo funciona sin GPU, decidiendo por reglas.
+
+### Misiones sueltas y otras órdenes
+
 ```bash
 arma3-ia escenarios                          # lista de escenarios
 arma3-ia perfiles                            # lista de campañas
@@ -164,7 +217,7 @@ Variables de entorno: `ARMA3IA_CONFIG`, `ARMA3IA_LLM_URL`, `ARMA3IA_LLM_MODELO`,
 ## Desarrollo
 
 ```bash
-pytest                 # 108 tests, sin GPU (el de Ollama real se omite si no hay servidor)
+pytest                 # 136 tests, sin GPU (el de Ollama real se omite si no hay servidor)
 pytest -m ollama       # prueba contra el Ollama de verdad
 ruff check . && mypy   # estilo y tipos
 ```
@@ -172,8 +225,10 @@ ruff check . && mypy   # estilo y tipos
 ## Hoja de ruta
 
 - [x] Núcleo multiagente, memoria, reflexión, perfiles, simulador y pruebas.
+- [x] Zeus: campañas, misiones generadas, dirección en directo y órdenes por chat.
+- [x] NPC con personalidad, memoria de campaña y conversación en personaje.
+- [x] Enemigo controlado también por la IA, con su propia doctrina.
 - [ ] **Puente con ARMA 3**: extensión (`callExtension` + `ExtensionCallback`) y scripts SQF
       que envían observaciones y ejecutan órdenes por la red local hacia el PC de la IA.
-- [ ] Enemigo controlado también por la IA (IA contra IA para autoentrenarse).
 - [ ] Voz: reconocimiento (Whisper) y síntesis para hablar por radio con los jugadores.
 - [ ] Ajuste fino (LoRA) con las misiones exportadas.
