@@ -372,3 +372,12 @@ def test_rasgos_concuerdan_con_la_persona():
     leila = Persona(nombre="Leila Haddad", rasgos=["veterana", "nerviosa", "valiente"], femenina=True)
     assert leila.presentacion().startswith("Leila Haddad (veterana, nerviosa, valiente)")
     assert Persona(nombre="Joe", rasgos=["veterano"]).presentacion() == "Joe (veterano)"
+
+
+def test_rango_dentro_del_nombre_no_se_duplica() -> None:
+    varga = Persona(nombre="Colonel Varga", rango="Sargento")
+    assert (varga.rango, varga.nombre) == ("Colonel", "Varga")
+    assert varga.presentacion() == "Colonel Varga"
+    assert Persona(nombre="Sgt. John Miller").rango == "Sgt"
+    assert Persona(nombre="Leila Haddad", rango="").nombre == "Leila Haddad"
+    assert Persona(nombre="Mayor").nombre == "Mayor"  # un nombre de una palabra no se toca
