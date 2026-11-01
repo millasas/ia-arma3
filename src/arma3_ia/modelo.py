@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .geo import Posicion
 from .texto import normalizar
@@ -192,6 +192,15 @@ VALOR_RASGO = {
 }
 
 
+# Rangos que el modelo a veces mete dentro del nombre ("Colonel Varga"), en varios idiomas y épocas.
+RANGOS_CONOCIDOS = {
+    "soldado", "private", "cabo", "corporal", "sargento", "sergeant", "sgt", "teniente", "lieutenant",
+    "lt", "capitan", "captain", "capt", "comandante", "commander", "mayor", "major", "coronel",
+    "colonel", "col", "general", "almirante", "admiral", "gefreiter", "unteroffizier", "feldwebel",
+    "leutnant", "oberleutnant", "hauptmann", "oberst", "jefe", "lider", "emir", "comisario",
+}
+
+
 class Persona(BaseModel):
     """El jefe de un grupo de NPC visto como una persona: nombre, rango, carácter e historia."""
 
@@ -218,6 +227,18 @@ class Persona(BaseModel):
             if texto in validos and texto not in limpios:
                 limpios.append(texto)
         return limpios[:3]
+
+    @model_validator(mode="after")
+    def _rango_fuera_del_nombre(self) -> Persona:
+        """'Colonel Varga' con rango 'Sargento' -> nombre 'Varga', rango 'Colonel' (no 'Sargento Colonel')."""
+        partes = self.nombre.split()
+        rangos: list[str] = []
+        while len(partes) > 1 and normalizar(partes[0]).replace(" ", "") in RANGOS_CONOCIDOS:
+            rangos.append(partes.pop(0).rstrip("."))
+        if rangos:
+            self.nombre = " ".join(partes)
+            self.rango = " ".join(rangos)
+        return self
 
     @field_validator("historia", mode="before")
     @classmethod
