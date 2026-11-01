@@ -1,8 +1,16 @@
-"""Memoria persistente en SQLite: misiones, eventos, decisiones, chat, lecciones y habilidades.
+"""Base de datos de la IA (SQLite, en el mismo PC): campañas, misiones, sucesos, lore y aprendizaje.
 
-Un único fichero (por defecto ``datos/memoria.db``) guarda todo lo que la IA vive.
-Las decisiones con su contexto completo quedan registradas y se pueden exportar como
-conjunto de datos para un futuro ajuste fino (LoRA) del modelo.
+Un único fichero (por defecto ``BBDD/ia-arma3.db``) guarda:
+
+- **campanas**: cada campaña con su estado completo (pasos, personajes, margen, resultado).
+- **misiones**: cada misión jugada, de qué campaña y paso es, en qué terreno y cómo acabó.
+- **eventos**: todo lo que pasó en cada misión (contactos, bajas, explosiones, radio...).
+- **decisiones** y **conversaciones**: lo que decidió y dijo cada NPC (sirve para entrenar un LoRA).
+- **lore**: la historia que va escribiendo Zeus (crónicas, imprevistos, caídos, final).
+- **lecciones** y **habilidades**: lo aprendido, que se conserva aunque se borren campañas.
+
+Borrar una campaña borra en cascada sus misiones, eventos, decisiones, conversaciones y lore.
+Cada cambio pasa por el vigilante de espacio (``espacio.py``).
 """
 
 from __future__ import annotations
@@ -18,18 +26,34 @@ from pathlib import Path
 from typing import Any
 
 from ..modelo import Evento, MensajeChat, ResultadoMision
+from .espacio import VigilanteEspacio
 
-VERSION_ESQUEMA = 1
+VERSION_ESQUEMA = 2
 
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     clave TEXT PRIMARY KEY,
     valor TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS campanas (
+    id TEXT PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    encargo TEXT NOT NULL DEFAULT '',
+    objetivo TEXT NOT NULL DEFAULT '',
+    estado TEXT NOT NULL DEFAULT 'en_curso',
+    terreno TEXT NOT NULL DEFAULT '',
+    datos TEXT NOT NULL,
+    creada TEXT NOT NULL,
+    actualizada TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS misiones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    campana TEXT NOT NULL,
+    campana_id TEXT REFERENCES campanas(id) ON DELETE CASCADE,
+    capitulo INTEGER,
+    titulo TEXT NOT NULL DEFAULT '',
     escenario TEXT NOT NULL,
+    terreno TEXT NOT NULL DEFAULT '',
+    epoca TEXT,
     bando TEXT,
     inicio TEXT NOT NULL,
     fin TEXT,
@@ -39,6 +63,7 @@ CREATE TABLE IF NOT EXISTS misiones (
     resumen TEXT,
     resultado TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_misiones_campana ON misiones(campana_id, capitulo);
 CREATE TABLE IF NOT EXISTS eventos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mision_id INTEGER NOT NULL REFERENCES misiones(id) ON DELETE CASCADE,
@@ -71,9 +96,20 @@ CREATE TABLE IF NOT EXISTS conversaciones (
     texto TEXT NOT NULL,
     es_ia INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_conversaciones_mision ON conversaciones(mision_id);
+CREATE TABLE IF NOT EXISTS lore (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campana_id TEXT NOT NULL REFERENCES campanas(id) ON DELETE CASCADE,
+    mision_id INTEGER,
+    tipo TEXT NOT NULL,
+    titulo TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    creado TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lore_campana ON lore(campana_id, id);
 CREATE TABLE IF NOT EXISTS lecciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    campana TEXT,
+    epoca TEXT,
     rol TEXT NOT NULL,
     situacion TEXT NOT NULL,
     leccion TEXT NOT NULL,
@@ -88,14 +124,7 @@ CREATE TABLE IF NOT EXISTS lecciones (
     creada TEXT NOT NULL,
     actualizada TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_lecciones_rol ON lecciones(rol, campana, activa);
-CREATE TABLE IF NOT EXISTS campanas (
-    id TEXT PRIMARY KEY,
-    nombre TEXT NOT NULL,
-    estado TEXT NOT NULL,
-    creada TEXT NOT NULL,
-    actualizada TEXT NOT NULL
-);
+CREATE INDEX IF NOT EXISTS idx_lecciones_rol ON lecciones(rol, epoca, activa);
 CREATE TABLE IF NOT EXISTS habilidades (
     nombre TEXT PRIMARY KEY,
     estado TEXT NOT NULL,
@@ -110,14 +139,14 @@ def _ahora() -> str:
 
 @dataclass
 class Leccion:
-    """Algo que la IA ha aprendido. `campana=None` significa que vale para cualquier campaña."""
+    """Algo que la IA ha aprendido. `epoca` es la era en la que vale; None = vale para cualquiera."""
 
     rol: str
     situacion: str
     leccion: str
     tipo: str = "error"
     etiquetas: list[str] = field(default_factory=list)
-    campana: str | None = None
+    epoca: str | None = None
     peso: float = 1.0
     veces_usada: int = 0
     exitos: int = 0
@@ -138,7 +167,7 @@ class Leccion:
 def _leccion_de_fila(fila: sqlite3.Row) -> Leccion:
     return Leccion(
         id=fila["id"],
-        campana=fila["campana"],
+        epoca=fila["epoca"],
         rol=fila["rol"],
         situacion=fila["situacion"],
         leccion=fila["leccion"],
@@ -153,18 +182,34 @@ def _leccion_de_fila(fila: sqlite3.Row) -> Leccion:
     )
 
 
-class Memoria:
-    """Acceso a la base de datos. Es segura para usar desde un único bucle asyncio."""
+class ErrorBaseDatos(RuntimeError):
+    """La base de datos es de una versión antigua o no se puede abrir."""
 
-    def __init__(self, ruta: str | Path = "datos/memoria.db") -> None:
+
+class Memoria:
+    """Acceso a la base de datos. Es segura para usar desde un único bucle asyncio.
+
+    Con un `vigilante`, cada cambio comprueba el espacio; si el espacio es crítico, la memoria
+    entra en modo ahorro: guarda las decisiones sin sus textos largos y no guarda la radio.
+    """
+
+    def __init__(self, ruta: str | Path = "BBDD/ia-arma3.db", vigilante: VigilanteEspacio | None = None) -> None:
         self.ruta = str(ruta)
+        self.vigilante = vigilante
         if self.ruta != ":memory:":
             Path(self.ruta).parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(self.ruta, check_same_thread=False)
         self._con.row_factory = sqlite3.Row
+        self._con.execute("PRAGMA foreign_keys = ON")
         self._cerrojo = threading.RLock()
+        version = self._version()
+        if version is not None and version != VERSION_ESQUEMA:
+            self._con.close()
+            raise ErrorBaseDatos(
+                f"La base de datos {self.ruta} es de la versión {version} y esta IA usa la {VERSION_ESQUEMA}. "
+                "Bórrala (o muévela) y se creará una nueva."
+            )
         with self._transaccion() as con:
-            con.execute("PRAGMA foreign_keys = ON")
             if self.ruta != ":memory:":
                 con.execute("PRAGMA journal_mode = WAL")
             con.executescript(_ESQUEMA)
@@ -172,6 +217,18 @@ class Memoria:
                 "INSERT OR IGNORE INTO meta (clave, valor) VALUES ('version_esquema', ?)",
                 (str(VERSION_ESQUEMA),),
             )
+
+    def _version(self) -> int | None:
+        try:
+            filas = self._con.execute("SELECT valor FROM meta WHERE clave = 'version_esquema'").fetchall()
+        except sqlite3.OperationalError:
+            return None
+        return int(filas[0][0]) if filas else None
+
+    @property
+    def ahorro(self) -> bool:
+        """Modo ahorro: el disco o el límite de la base de datos están al máximo."""
+        return self.vigilante is not None and self.vigilante.critico
 
     @contextmanager
     def _transaccion(self) -> Iterator[sqlite3.Connection]:
@@ -182,6 +239,8 @@ class Memoria:
             except Exception:
                 self._con.rollback()
                 raise
+        if self.vigilante is not None:
+            self.vigilante.comprobar()
 
     def _consulta(self, sql: str, parametros: Iterable[Any] = ()) -> list[sqlite3.Row]:
         with self._cerrojo:
@@ -192,11 +251,22 @@ class Memoria:
             self._con.close()
 
     # ------------------------------------------------------------------ misiones
-    def iniciar_mision(self, campana: str, escenario: str, bando: str | None = None) -> int:
+    def iniciar_mision(
+        self,
+        escenario: str,
+        *,
+        campana_id: str | None = None,
+        capitulo: int | None = None,
+        titulo: str = "",
+        terreno: str = "",
+        epoca: str | None = None,
+        bando: str | None = None,
+    ) -> int:
         with self._transaccion() as con:
             cur = con.execute(
-                "INSERT INTO misiones (campana, escenario, bando, inicio) VALUES (?, ?, ?, ?)",
-                (campana, escenario, bando, _ahora()),
+                "INSERT INTO misiones (campana_id, capitulo, titulo, escenario, terreno, epoca, bando, inicio) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (campana_id, capitulo, titulo, escenario, terreno, epoca, bando, _ahora()),
             )
             return int(cur.lastrowid or 0)
 
@@ -224,10 +294,10 @@ class Memoria:
         filas = self._consulta("SELECT * FROM misiones WHERE id = ?", (mision_id,))
         return dict(filas[0]) if filas else None
 
-    def misiones(self, campana: str | None = None, limite: int = 20) -> list[dict[str, Any]]:
-        if campana:
+    def misiones(self, campana_id: str | None = None, limite: int = 20) -> list[dict[str, Any]]:
+        if campana_id:
             filas = self._consulta(
-                "SELECT * FROM misiones WHERE campana = ? ORDER BY id DESC LIMIT ?", (campana, limite)
+                "SELECT * FROM misiones WHERE campana_id = ? ORDER BY id DESC LIMIT ?", (campana_id, limite)
             )
         else:
             filas = self._consulta("SELECT * FROM misiones ORDER BY id DESC LIMIT ?", (limite,))
@@ -235,9 +305,11 @@ class Memoria:
 
     # ------------------------------------------------------------------ eventos y decisiones
     def registrar_eventos(self, mision_id: int, eventos: Iterable[Evento]) -> None:
+        ahorro = self.ahorro
         filas = [
             (mision_id, e.tiempo, e.tipo, e.unidad, e.descripcion, json.dumps(e.datos, ensure_ascii=False, default=str))
             for e in eventos
+            if not (ahorro and e.tipo == "radio")
         ]
         if not filas:
             return
@@ -276,6 +348,9 @@ class Memoria:
         lecciones: Iterable[int] = (),
         duracion_s: float = 0.0,
     ) -> int:
+        if self.ahorro:
+            # Sin espacio: se guarda qué decidió, pero no los textos largos que lo llevaron a decidirlo.
+            sistema, usuario = "", ""
         with self._transaccion() as con:
             cur = con.execute(
                 "INSERT INTO decisiones (mision_id, tiempo, agente, rol, sistema, usuario, respuesta, "
@@ -337,11 +412,11 @@ class Memoria:
         ahora = _ahora()
         with self._transaccion() as con:
             cur = con.execute(
-                "INSERT INTO lecciones (campana, rol, situacion, leccion, tipo, etiquetas, peso, "
+                "INSERT INTO lecciones (epoca, rol, situacion, leccion, tipo, etiquetas, peso, "
                 "veces_usada, exitos, confirmaciones, mision_origen, activa, creada, actualizada) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    leccion.campana,
+                    leccion.epoca,
                     leccion.rol,
                     leccion.situacion,
                     leccion.leccion,
@@ -367,20 +442,20 @@ class Memoria:
     def lecciones(
         self,
         rol: str | None = None,
-        campana: str | None = None,
+        epoca: str | None = None,
         *,
         incluir_generales: bool = True,
         solo_activas: bool = True,
     ) -> list[Leccion]:
-        """Lecciones de un rol (más las del rol "todos") y de una campaña (más las generales)."""
+        """Lecciones de un rol (más las del rol "todos") y de una era (más las generales)."""
         sql = "SELECT * FROM lecciones WHERE 1=1"
         parametros: list[Any] = []
         if rol is not None:
             sql += " AND rol IN (?, 'todos')"
             parametros.append(rol)
-        if campana is not None:
-            sql += " AND (campana = ?" + (" OR campana IS NULL)" if incluir_generales else ")")
-            parametros.append(campana)
+        if epoca is not None:
+            sql += " AND (epoca = ?" + (" OR epoca IS NULL)" if incluir_generales else ")")
+            parametros.append(epoca)
         if solo_activas:
             sql += " AND activa = 1"
         return [_leccion_de_fila(f) for f in self._consulta(sql + " ORDER BY id", parametros)]
@@ -440,24 +515,100 @@ class Memoria:
                 (nombre, json.dumps(estado), _ahora()),
             )
 
-    # ------------------------------------------------------------------ campañas de Zeus
-    def guardar_campana(self, id_campana: str, nombre: str, estado: dict[str, Any]) -> None:
+    # ------------------------------------------------------------------ campañas
+    def guardar_campana(
+        self,
+        id_campana: str,
+        *,
+        nombre: str,
+        datos: dict[str, Any],
+        encargo: str = "",
+        objetivo: str = "",
+        estado: str = "en_curso",
+        terreno: str = "",
+    ) -> None:
         ahora = _ahora()
         with self._transaccion() as con:
             con.execute(
-                "INSERT INTO campanas (id, nombre, estado, creada, actualizada) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, estado = excluded.estado, "
-                "actualizada = excluded.actualizada",
-                (id_campana, nombre, json.dumps(estado, ensure_ascii=False), ahora, ahora),
+                "INSERT INTO campanas (id, nombre, encargo, objetivo, estado, terreno, datos, creada, actualizada) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, "
+                "encargo = excluded.encargo, objetivo = excluded.objetivo, estado = excluded.estado, "
+                "terreno = excluded.terreno, datos = excluded.datos, actualizada = excluded.actualizada",
+                (id_campana, nombre, encargo, objetivo, estado, terreno, json.dumps(datos, ensure_ascii=False),
+                 ahora, ahora),
             )
 
     def cargar_campana(self, id_campana: str) -> dict[str, Any] | None:
-        filas = self._consulta("SELECT estado FROM campanas WHERE id = ?", (id_campana,))
-        return json.loads(filas[0]["estado"]) if filas else None
+        filas = self._consulta("SELECT datos FROM campanas WHERE id = ?", (id_campana,))
+        return json.loads(filas[0]["datos"]) if filas else None
 
     def campanas(self) -> list[dict[str, Any]]:
+        """Campañas guardadas, la última tocada primero (sin el estado completo)."""
         return [dict(f) for f in self._consulta(
-            "SELECT id, nombre, creada, actualizada FROM campanas ORDER BY actualizada DESC, creada DESC")]
+            "SELECT id, nombre, encargo, objetivo, estado, terreno, creada, actualizada FROM campanas "
+            "ORDER BY actualizada DESC, creada DESC, rowid DESC")]
+
+    def borrar_campana(self, id_campana: str) -> dict[str, int]:
+        """Borra la campaña y todo lo suyo (misiones, eventos, decisiones, chat, lore) y libera el espacio.
+
+        Las lecciones y habilidades aprendidas se conservan. Devuelve cuántas filas se han borrado.
+        """
+        conteo = self.contar_campana(id_campana)
+        with self._transaccion() as con:
+            con.execute("DELETE FROM campanas WHERE id = ?", (id_campana,))
+        with self._cerrojo:
+            if self.ruta != ":memory:":
+                self._con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._con.execute("VACUUM")
+        if self.vigilante is not None:
+            self.vigilante.comprobar()
+        return conteo
+
+    def contar_campana(self, id_campana: str) -> dict[str, int]:
+        def contar(sql: str) -> int:
+            return int(self._consulta(sql, (id_campana,))[0][0] or 0)
+
+        en_misiones = "(SELECT id FROM misiones WHERE campana_id = ?)"
+        return {
+            "misiones": contar("SELECT COUNT(*) FROM misiones WHERE campana_id = ?"),
+            "eventos": contar(f"SELECT COUNT(*) FROM eventos WHERE mision_id IN {en_misiones}"),
+            "decisiones": contar(f"SELECT COUNT(*) FROM decisiones WHERE mision_id IN {en_misiones}"),
+            "conversaciones": contar(f"SELECT COUNT(*) FROM conversaciones WHERE mision_id IN {en_misiones}"),
+            "lore": contar("SELECT COUNT(*) FROM lore WHERE campana_id = ?"),
+        }
+
+    def uso_por_campana(self) -> dict[str, float]:
+        """Megabytes (aproximados) que ocupa cada campaña en la base de datos."""
+        uso: dict[str, float] = {}
+        for c in self.campanas():
+            cid = c["id"]
+            en_misiones = "(SELECT id FROM misiones WHERE campana_id = ?)"
+            consultas = (
+                "SELECT SUM(LENGTH(datos)) FROM campanas WHERE id = ?",
+                "SELECT SUM(LENGTH(COALESCE(resumen, '')) + LENGTH(COALESCE(resultado, ''))) FROM misiones "
+                "WHERE campana_id = ?",
+                f"SELECT SUM(LENGTH(descripcion) + LENGTH(COALESCE(datos, ''))) FROM eventos WHERE mision_id IN "
+                f"{en_misiones}",
+                f"SELECT SUM(LENGTH(sistema) + LENGTH(usuario) + LENGTH(respuesta)) FROM decisiones "
+                f"WHERE mision_id IN {en_misiones}",
+                f"SELECT SUM(LENGTH(texto)) FROM conversaciones WHERE mision_id IN {en_misiones}",
+                "SELECT SUM(LENGTH(texto) + LENGTH(titulo)) FROM lore WHERE campana_id = ?",
+            )
+            uso[cid] = sum(float(self._consulta(sql, (cid,))[0][0] or 0) for sql in consultas) / (1024 * 1024)
+        return uso
+
+    # ------------------------------------------------------------------ lore
+    def anadir_lore(self, campana_id: str, tipo: str, titulo: str, texto: str, mision_id: int | None = None) -> int:
+        """Apunta un trozo de la historia de la campaña (inicio, misión, imprevisto, personaje, final)."""
+        with self._transaccion() as con:
+            cur = con.execute(
+                "INSERT INTO lore (campana_id, mision_id, tipo, titulo, texto, creado) VALUES (?, ?, ?, ?, ?, ?)",
+                (campana_id, mision_id, tipo, titulo, texto, _ahora()),
+            )
+            return int(cur.lastrowid or 0)
+
+    def lore(self, campana_id: str) -> list[dict[str, Any]]:
+        return [dict(f) for f in self._consulta("SELECT * FROM lore WHERE campana_id = ? ORDER BY id", (campana_id,))]
 
     # ------------------------------------------------------------------ informes
     def estadisticas(self) -> dict[str, Any]:
@@ -465,6 +616,7 @@ class Memoria:
             return int(self._consulta(sql)[0][0] or 0)
 
         return {
+            "campanas": contar("SELECT COUNT(*) FROM campanas"),
             "misiones": contar("SELECT COUNT(*) FROM misiones WHERE fin IS NOT NULL"),
             "victorias": contar("SELECT COUNT(*) FROM misiones WHERE estado = 'victoria'"),
             "lecciones_activas": contar("SELECT COUNT(*) FROM lecciones WHERE activa = 1"),
@@ -472,6 +624,7 @@ class Memoria:
             "decisiones_llm": contar("SELECT COUNT(*) FROM decisiones WHERE origen = 'llm'"),
             "decisiones_reglas": contar("SELECT COUNT(*) FROM decisiones WHERE origen = 'reglas'"),
             "mensajes_chat": contar("SELECT COUNT(*) FROM conversaciones"),
+            "lore": contar("SELECT COUNT(*) FROM lore"),
         }
 
     def exportar_dataset(
@@ -483,8 +636,8 @@ class Memoria:
         experiencia acumulada. Devuelve el número de ejemplos escritos.
         """
         sql = (
-            "SELECT d.*, m.campana, m.puntuacion FROM decisiones d JOIN misiones m ON m.id = d.mision_id "
-            "WHERE m.puntuacion >= ?"
+            "SELECT d.*, m.campana_id, m.epoca, m.puntuacion FROM decisiones d JOIN misiones m "
+            "ON m.id = d.mision_id WHERE m.puntuacion >= ? AND d.sistema != ''"
         )
         if solo_llm:
             sql += " AND d.origen = 'llm'"
@@ -500,7 +653,8 @@ class Memoria:
                     ],
                     "metadata": {
                         "rol": fila["rol"],
-                        "campana": fila["campana"],
+                        "campana": fila["campana_id"],
+                        "epoca": fila["epoca"],
                         "mision": fila["mision_id"],
                         "puntuacion": fila["puntuacion"],
                     },

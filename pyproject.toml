@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arma3-ia"
-version = "0.1.0"
-description = "Núcleo de IA local (Ollama) multiagente para ARMA 3: mando, escuadras, pilotos, memoria y aprendizaje."
+version = "0.2.0"
+description = "IA local (Ollama) para ARMA 3: Zeus crea y dirige campañas por encargo y los NPC deciden por su cuenta."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Privado" }
@@ -28,9 +28,6 @@ arma3-ia = "arma3_ia.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-arma3_ia = ["campanas/perfiles/*.yaml", "simulador/escenarios/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

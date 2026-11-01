@@ -29,7 +29,7 @@ que la parte de ARMA (SQF y la extensión) se pueda escribir sin tocar el núcle
   `arma3_ia.puente.decodificar` y llama al cerebro.
 
 Nada de esto existe aún: es el siguiente paso del proyecto. El formato de abajo ya está
-implementado y probado (`tests/test_perfiles_protocolo.py`).
+implementado y probado (`tests/test_ambientacion_protocolo.py`).
 
 ## Sobre
 
@@ -177,16 +177,22 @@ actualiza la utilidad de las lecciones que usó y guarda lecciones nuevas.
 
 ## Poderes de Zeus (propuesta, aún no en el codificador)
 
-El director de juego necesita cuatro operaciones más (`ControlZeus` en
+Zeus tiene el control total de la partida y necesita estas operaciones (`ControlZeus` en
 `src/arma3_ia/puente/interfaz.py`, ya implementadas en el simulador). Propuesta de mensajes
 para cuando se escriba el puente:
 
 | IA → ARMA                    | datos                                                                 | en SQF |
 |------------------------------|-----------------------------------------------------------------------|--------|
-| `zeus_vista` (petición)      | —                                                                     | ARMA responde con todos los grupos de todos los bandos, objetivos y condiciones |
+| `zeus_preparar` (al empezar) | el `mision.yaml` que escribe Zeus: `terreno`, `zona`, lugares, decorado, grupos con jefe y tarea, objetivos, hora y clima | comprobar `worldName` contra `terreno`, colocar todo y arrancar |
+| `zeus_vista` (petición)      | —                                                                     | ARMA responde con todos los grupos de todos los bandos, objetivos, condiciones y decorado |
 | `zeus_crear_grupo`           | `bando`, `id`, `indicativo`, `tipo`, `posicion`, `efectivos`, `armada` | `createGroup` + `createUnit`/`createVehicle`, devuelve el id |
+| `zeus_decorado`              | `id`, `tipo`, `posicion`, `radio_m`, `bando`, `descripcion`           | una composición por tipo: sacos terreros y nidos (`fortificacion`), `createMine` (`minas`, `ied`), barreras (`barricada`, `alambrada`), torre, humo... |
 | `zeus_condiciones`           | `hora` (`dia`, `amanecer`, `atardecer`, `noche`), `clima` (`despejado`, `nubes`, `lluvia`, `niebla`) | `skipTime`, `setOvercast`, `setRain`, `setFog` |
 | `zeus_anuncio`               | `texto`                                                               | `systemChat` o `globalChat` a todos |
 
 La vista global es como la observación pero sin niebla de guerra: Zeus lo ve todo. Los grupos
 creados por Zeus pasan a ser NPC normales: el bando correspondiente les asigna persona y orden.
+Zeus no recibe órdenes de los jugadores: el chat solo llega a los NPC.
+
+Zeus elige el terreno entre los de `zeus.terrenos` en la configuración: tienen que estar
+instalados en el PC de juego (los de DLC o mods, también en los clientes).

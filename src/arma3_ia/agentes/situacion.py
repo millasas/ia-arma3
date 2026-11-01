@@ -18,7 +18,6 @@ from ..modelo import (
 from ..texto import recortar, reloj
 
 RADIO_LZ_CALIENTE = 500.0
-ALTITUDES = {"baja": "a baja altura", "media": "a media altura", "alta": "a gran altura"}
 
 
 def porcentaje(valor: float) -> str:
@@ -118,6 +117,19 @@ def describir_referencias(obs: Observacion, cerca_de: Posicion | None = None, ma
     for r in referencias[:maximo]:
         relativa = f", {describir_relativa(cerca_de, r.posicion)}" if cerca_de else ""
         lineas.append(f"{r.nombre} ({r.tipo}) en {r.posicion.cuadricula()}{relativa}")
+    return lineas
+
+
+def describir_objetos(obs: Observacion, cerca_de: Posicion | None = None, maximo: int = 8) -> list[str]:
+    """El decorado que conoce el bando (fortificaciones, minas propias, barricadas...)."""
+    objetos = list(obs.objetos)
+    if cerca_de is not None:
+        objetos.sort(key=lambda o: o.posicion.distancia(cerca_de))
+    lineas = []
+    for o in objetos[:maximo]:
+        dueno = "" if o.bando is None else (" (propio)" if o.bando == obs.bando else " (ENEMIGO)")
+        texto = f"{o.tipo.value.replace('_', ' ')}{dueno} en {o.posicion.cuadricula()}, radio {int(o.radio_m)} m"
+        lineas.append(texto + (f": {recortar(o.descripcion, 80)}" if o.descripcion else ""))
     return lineas
 
 

@@ -78,9 +78,6 @@ class Posicion(BaseModel):
         cy = max(0, int(self.y // escala))
         return f"{cx:0{n}d}{cy:0{n}d}"
 
-    def a_lista(self) -> list[float]:
-        return [round(self.x, 1), round(self.y, 1)]
-
     def __str__(self) -> str:
         return self.cuadricula()
 

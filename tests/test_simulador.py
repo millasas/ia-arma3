@@ -3,9 +3,11 @@ import asyncio
 import pytest
 
 from arma3_ia.geo import Posicion
-from arma3_ia.modelo import Accion, EstadoObjetivo, EstadoUnidad, TipoAccion
-from arma3_ia.simulador import Escenario, SimuladorTexto, cargar_escenario, escenarios_disponibles
+from arma3_ia.modelo import Accion, EstadoObjetivo, EstadoUnidad, ObjetoMapa, TipoAccion, TipoObjeto
+from arma3_ia.simulador import Escenario, SimuladorTexto, cargar_escenario, guardar_escenario
 from arma3_ia.simulador.render import mapa_ascii, parte_situacion
+from arma3_ia.zeus import TipoMision
+from conftest import construir_mision
 
 ATERRIZAJE_SEGURO = {"velocidad_aproximacion": 10, "tasa_descenso": 1.5, "altura_recogida": 20,
                      "intensidad_recogida": 0.6}
@@ -20,17 +22,17 @@ def escenario_mini(**extra) -> Escenario:
         "zonas_aterrizaje": [{"id": "lz", "nombre": "LZ Lejana", "posicion": [3000, 3000]}],
         "bandos": {
             "blufor": {
-                "controlador": "ia", "base": [500, 500],
+                "base": [500, 500],
                 "unidades": [
-                    {"id": "alfa", "posicion": [1000, 1000]},
-                    {"id": "halcon", "tipo": "helicoptero", "posicion": [1000, 1040], "efectivos": 4,
-                     "capacidad": 1},
+                    {"id": "alfa", "indicativo": "Alfa-1", "posicion": [1000, 1000]},
+                    {"id": "halcon", "indicativo": "Halcón-1", "tipo": "helicoptero", "posicion": [1000, 1040],
+                     "efectivos": 4, "capacidad": 1},
                 ],
                 "objetivos": [{"id": "obj", "nombre": "Tomar el cruce", "tipo": "capturar",
                                "posicion": [3000, 3000], "radio_m": 200}],
             },
-            "opfor": {"controlador": "guion", "unidades": [
-                {"id": "centinela", "posicion": [3900, 100], "efectivos": 2},
+            "opfor": {"unidades": [
+                {"id": "centinela", "indicativo": "Rojo-1", "posicion": [3900, 100], "efectivos": 2},
             ]},
         },
     }
@@ -43,15 +45,14 @@ def correr(sim: SimuladorTexto, pasos: int) -> None:
         sim.paso()
 
 
-def test_escenarios_incluidos_cargan_y_arrancan():
-    escenarios = escenarios_disponibles()
-    assert {"asalto_aldea", "rescate_helicoptero", "defensa_granja", "emboscada_convoy"} <= set(escenarios)
-    for escenario in escenarios.values():
-        sim = SimuladorTexto(escenario, semilla=1)
+def test_las_misiones_de_zeus_arrancan_y_se_guardan_en_yaml(perfil, tmp_path):
+    for tipo in TipoMision:
+        mision = construir_mision(tipo, perfil)
+        sim = SimuladorTexto(mision.escenario, semilla=1)
         obs = sim.observacion(sim.bando_principal)
-        assert obs.unidades and obs.objetivos, escenario.id
-    with pytest.raises(KeyError, match="Disponibles"):
-        cargar_escenario("no_existe")
+        assert obs.unidades and obs.objetivos, tipo
+        ruta = guardar_escenario(mision.escenario, tmp_path / f"{tipo.value}.yaml", {"sucesos": [1, 2]})
+        assert cargar_escenario(ruta) == mision.escenario
 
 
 def test_simulacion_determinista_con_semilla(escenario):
@@ -159,12 +160,11 @@ def test_combate_causa_bajas_y_eventos(escenario):
     assert sim.unidades["alfa"].efectivos < 8 or sim.unidades["guarnicion"].efectivos < 6
 
 
-def test_chat_guionizado_y_fin_por_tiempo(escenario):
+def test_chat_de_los_jugadores_y_fin_por_tiempo(escenario):
     sim = SimuladorTexto(escenario, semilla=1)
     assert asyncio.run(sim.recibir_chat("blufor")) == []
-    correr(sim, 2)
-    chat = asyncio.run(sim.recibir_chat("blufor"))
-    assert [m.autor for m in chat] == ["Sargento López"]
+    sim.inyectar_chat("blufor", "Sargento López", "¿Cuál es el plan?")
+    assert [m.autor for m in asyncio.run(sim.recibir_chat("blufor"))] == ["Sargento López"]
     assert asyncio.run(sim.recibir_chat("blufor")) == []
     correr(sim, 200)
     resultado = sim.resultado()
@@ -172,8 +172,66 @@ def test_chat_guionizado_y_fin_por_tiempo(escenario):
     assert sim.terminado()
 
 
-def test_render_ascii(escenario, perfil):
-    sim = SimuladorTexto(escenario, perfil, semilla=1)
+def test_render_ascii(escenario):
+    escenario.objetos = [ObjetoMapa(id="f", tipo=TipoObjeto.FORTIFICACION, posicion=Posicion(x=900, y=900),
+                                    bando="blufor"),
+                         ObjetoMapa(id="m", tipo=TipoObjeto.MINAS, posicion=Posicion(x=2000, y=2000), bando="opfor")]
+    sim = SimuladorTexto(escenario, semilla=1)
     mapa = mapa_ascii(sim, "blufor")
-    assert "@" in mapa and "A" in mapa
+    assert "@" in mapa and "A" in mapa and "=" in mapa
+    assert "x" not in mapa.split("Leyenda")[0]  # las minas enemigas no se ven
+    assert "x" in mapa_ascii(sim).split("Leyenda")[0]  # el árbitro lo ve todo
     assert "Alfa-1" in parte_situacion(sim, "blufor")
+
+
+# ---------------------------------------------------------------------------------- decorado de Zeus
+def con_objeto(tipo: TipoObjeto, x: float, y: float, bando: str | None = "opfor", radio: float = 150) -> Escenario:
+    escenario = escenario_mini()
+    escenario.objetos = [ObjetoMapa(id="o1", tipo=tipo, posicion=Posicion(x=x, y=y), radio_m=radio, bando=bando)]
+    return escenario
+
+
+def test_las_minas_hieren_a_quien_las_cruza_y_no_a_quien_espera():
+    cruza = SimuladorTexto(con_objeto(TipoObjeto.MINAS, 2000, 2000), semilla=1)
+    cruza.aplicar("blufor", Accion(unidad="alfa", tipo=TipoAccion.MOVER, destino=Posicion(x=3000, y=3000)))
+    correr(cruza, 60)
+    assert any(e.tipo == "explosion" for e in cruza.registro)
+    assert cruza.unidades["alfa"].efectivos < 8
+
+    quieta = SimuladorTexto(con_objeto(TipoObjeto.MINAS, 1000, 1000), semilla=1)
+    correr(quieta, 20)
+    assert not any(e.tipo == "explosion" for e in quieta.registro)
+
+
+def test_un_ied_explota_una_sola_vez():
+    sim = SimuladorTexto(con_objeto(TipoObjeto.IED, 2000, 2000, radio=60), semilla=2)
+    sim.aplicar("blufor", Accion(unidad="alfa", tipo=TipoAccion.MOVER, destino=Posicion(x=3000, y=3000)))
+    correr(sim, 60)
+    assert sum(e.tipo == "explosion" for e in sim.registro) == 1
+    assert not sim.objetos[0].activo
+
+
+def test_barricadas_frenan_y_fortificaciones_protegen():
+    libre = SimuladorTexto(escenario_mini(), semilla=1)
+    frenado = SimuladorTexto(con_objeto(TipoObjeto.ALAMBRADA, 1000, 1000, bando=None, radio=400), semilla=1)
+    for sim in (libre, frenado):
+        sim.aplicar("blufor", Accion(unidad="alfa", tipo=TipoAccion.MOVER, destino=Posicion(x=3000, y=3000)))
+        correr(sim, 5)
+    origen = Posicion(x=1000, y=1000)
+    assert frenado.unidades["alfa"].pos.distancia(origen) < libre.unidades["alfa"].pos.distancia(origen) * 0.7
+
+    sin = SimuladorTexto(escenario_mini(), semilla=1)
+    con = SimuladorTexto(con_objeto(TipoObjeto.FORTIFICACION, 1000, 1000, bando="blufor"), semilla=1)
+    assert con._cobertura(con.unidades["alfa"]) > sin._cobertura(sin.unidades["alfa"])
+    # La fortificación del enemigo no protege a quien la ocupa.
+    ajena = SimuladorTexto(con_objeto(TipoObjeto.FORTIFICACION, 1000, 1000, bando="opfor"), semilla=1)
+    assert ajena._cobertura(ajena.unidades["alfa"]) == sin._cobertura(sin.unidades["alfa"])
+
+
+def test_zeus_coloca_decorado_durante_la_mision():
+    sim = SimuladorTexto(escenario_mini(), semilla=1)
+    asyncio.run(sim.colocar_objeto(ObjetoMapa(id="humo", tipo=TipoObjeto.HUMO, posicion=Posicion(x=9000, y=50),
+                                              bando="blufor")))
+    assert sim.objetos[-1].posicion.x == 4000  # se recorta al mapa
+    assert any(e.tipo == "decorado" for e in sim.registro)
+    assert sim.vista_global().objetos and sim.observacion("blufor").objetos

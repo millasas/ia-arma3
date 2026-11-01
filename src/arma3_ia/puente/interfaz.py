@@ -6,7 +6,7 @@ la IA no sabe (ni le importa) cuál de los dos tiene delante.
 Ciclo de una partida (ver ``partida.Partida``)::
 
     while not mundo.terminado():
-        for bando in bandos_ia:
+        for bando in bandos:
             obs = await mundo.observar(bando)          # qué sabe ese bando ahora
             chat = await mundo.recibir_chat(bando)     # mensajes nuevos de los jugadores
             salida = await cerebro.paso(obs, chat)     # la IA piensa
@@ -19,7 +19,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..modelo import Accion, GrupoNuevo, MensajeChat, Observacion, ResultadoAccion, ResultadoMision, VistaGlobal
+from ..modelo import (
+    Accion,
+    GrupoNuevo,
+    MensajeChat,
+    ObjetoMapa,
+    Observacion,
+    ResultadoAccion,
+    ResultadoMision,
+    VistaGlobal,
+)
 
 
 class Mundo(ABC):
@@ -59,7 +68,8 @@ class ControlZeus(ABC):
     """Los poderes de Zeus (el director de juego): ver todo el mundo y cambiarlo en directo.
 
     El simulador los implementa; en ARMA 3 corresponderán a órdenes de la extensión
-    (createGroup/createUnit, setOvercast/skipTime, mensajes globales).
+    (createGroup/createUnit, setOvercast/skipTime, composiciones con createVehicle y
+    hideObjectGlobal, mensajes globales).
     """
 
     @abstractmethod
@@ -73,6 +83,10 @@ class ControlZeus(ABC):
     @abstractmethod
     async def cambiar_condiciones(self, hora: str | None = None, clima: str | None = None) -> None:
         """Cambia la hora del día o el clima."""
+
+    @abstractmethod
+    async def colocar_objeto(self, objeto: ObjetoMapa) -> None:
+        """Coloca un elemento del decorado (fortificación, minas, barricada, humo...)."""
 
     @abstractmethod
     async def anunciar(self, texto: str) -> None:

@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from arma3_ia.campanas import cargar_perfil, perfiles_disponibles
+from arma3_ia.ambientacion import ERAS, PerfilCampana, normalizar_era
 from arma3_ia.geo import Posicion
-from arma3_ia.modelo import Accion, MensajeChat, Observacion, TipoAccion, TipoUnidad
+from arma3_ia.modelo import Accion, MensajeChat, Observacion, TipoAccion
 from arma3_ia.puente import (
     ErrorProtocolo,
     codificar_acciones,
@@ -17,36 +17,33 @@ from arma3_ia.puente import (
 )
 
 
-def test_todos_los_perfiles_cargan():
-    perfiles = perfiles_disponibles()
-    assert {"moderno", "ww2", "insurgencia", "contrainsurgencia", "guerra_fria"} <= set(perfiles)
-    for perfil in perfiles.values():
-        assert perfil.doctrina, perfil.id
-        assert perfil.indicativos.get("infanteria"), perfil.id
-        assert perfil.bloque_contexto("comandante").startswith("CAMPAÑA:")
-
-
-def test_tematizacion_por_campana():
-    ww2 = cargar_perfil("ww2")
-    assert not ww2.medios_aereos and ww2.retardo_radio_s > 0
+def test_la_ambientacion_tematiza_a_los_npc(perfil):
+    ww2 = perfil.model_copy(update={"id": "segunda_guerra_mundial", "epoca": "Europa, 1944",
+                                    "restricciones": ["Sin GPS."], "medios_aereos": False})
     contexto = ww2.bloque_contexto("comandante")
-    assert "1944" in contexto and "GPS" in contexto and "Tu carácter" in contexto
+    assert contexto.startswith("CAMPAÑA:") and "1944" in contexto and "GPS" in contexto
+    assert "Tu carácter" in contexto and "Doctrina" in contexto
     assert "Doctrina" not in ww2.bloque_contexto("enlace")
-    assert ww2.indicativo_para(TipoUnidad.INFANTERIA, 1) == "Baker"
-    assert ww2.indicativo_para(TipoUnidad.HELICOPTERO, 0) is None
+    enemigo = ww2.del_enemigo()
+    assert enemigo.bando_ia.nombre == ww2.enemigo.nombre and enemigo.indicativo_mando == "Fortaleza"
+    assert enemigo.id == ww2.id  # lo aprendido se comparte dentro de la misma época
 
 
-def test_perfil_desconocido_o_desde_fichero(tmp_path):
-    with pytest.raises(KeyError, match="Disponibles"):
-        cargar_perfil("marciano")
-    fichero = tmp_path / "mio.yaml"
-    fichero.write_text(
-        "id: mio\nnombre: Mío\nepoca: '2000'\ndescripcion: d\nbando_ia: {nombre: A}\n"
-        "enemigo: {nombre: B}\nestilo_comunicacion: seco\n",
-        encoding="utf-8",
-    )
-    assert cargar_perfil(str(fichero)).id == "mio"
-    assert "mio" in perfiles_disponibles(tmp_path)
+@pytest.mark.parametrize(("texto", "era"), [("WW2", "segunda_guerra_mundial"), ("Guerra Fría", "guerra_fria"),
+                                            ("moderno", "moderna"), ("ciencia ficción", "futura"),
+                                            ("cualquier cosa", "moderna")])
+def test_las_eras_se_normalizan(texto, era):
+    assert normalizar_era(texto) == era
+    assert era in ERAS
+
+
+def test_la_ambientacion_valida_lo_que_inventa_el_modelo():
+    perfil = PerfilCampana.model_validate({
+        "id": "Segunda Guerra Mundial", "nombre": "x", "epoca": "1944", "descripcion": "d",
+        "bando_ia": {"nombre": "A"}, "enemigo": {"nombre": "B"}, "estilo_comunicacion": "seco",
+        "retardo_radio_s": "mucho",
+    })
+    assert perfil.id == "segunda_guerra_mundial" and perfil.retardo_radio_s >= 0
 
 
 def test_protocolo_ida_y_vuelta(obs):

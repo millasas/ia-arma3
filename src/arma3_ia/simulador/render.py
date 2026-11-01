@@ -5,16 +5,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..agentes import situacion as s
-from ..modelo import EstadoObjetivo, EstadoUnidad
+from ..modelo import EstadoObjetivo, EstadoUnidad, TipoObjeto
 
 if TYPE_CHECKING:
     from .motor import SimuladorTexto
 
 SIMBOLO_TERRENO = {"bosque": "^", "urbano": "#", "colina": "n", "setos": "%"}
+SIMBOLO_OBJETO = {
+    TipoObjeto.FORTIFICACION: "=", TipoObjeto.PUESTO_CONTROL: "=", TipoObjeto.TORRE_VIGILANCIA: "!",
+    TipoObjeto.MINAS: "x", TipoObjeto.IED: "x", TipoObjeto.BARRICADA: ":", TipoObjeto.ALAMBRADA: ":",
+    TipoObjeto.ESCOMBROS: ":", TipoObjeto.HUMO: '"',
+}
 LEYENDA = (
     "Leyenda: letra MAYÚSCULA = unidad propia, * = helicóptero propio, r = enemigo, "
     "? = enemigo sin identificar, O = objetivo pendiente, V = objetivo cumplido, X = fallido, "
-    "+ = LZ, @ = base, ^ bosque, # pueblo, n colina"
+    "+ = LZ, @ = base, ^ bosque, # pueblo, n colina, = fortificación, ! torre, x minas, : obstáculo, "
+    '" humo, , otros restos'
 )
 
 
@@ -41,9 +47,12 @@ def mapa_ascii(sim: SimuladorTexto, bando: str | None = None, ancho: int = 50, a
         fila, col = celda(x, y)
         celdas[fila][col] = simbolo
 
+    principal = bando or sim.bando_principal
+    objetos = sim.objetos_visibles(bando) if bando else [o for o in sim.objetos if o.activo]
+    for obj in objetos:
+        poner(obj.posicion.x, obj.posicion.y, SIMBOLO_OBJETO.get(obj.tipo, ","))
     for z in sim.escenario.zonas_aterrizaje:
         poner(z.posicion.x, z.posicion.y, "+")
-    principal = bando or sim.bando_principal
     base = sim.base(principal)
     if base is not None:
         poner(base.x, base.y, "@")

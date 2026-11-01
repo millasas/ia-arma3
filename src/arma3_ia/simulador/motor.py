@@ -3,7 +3,8 @@
 Modela lo justo para que las decisiones importen: movimiento por tipo y postura, detección
 con niebla de guerra (alcance, terreno, postura, visibilidad), combate con cobertura,
 sorpresa y moral, munición, helicópteros con combustible, embarque y desembarque,
-aterrizajes (con la habilidad aprendida) y objetivos de misión.
+aterrizajes (con la habilidad aprendida), el decorado que coloca Zeus (fortificaciones,
+minas, barricadas, humo...) y objetivos de misión. Todos los bandos los lleva la IA.
 
 Es determinista con una semilla, así que los tests pueden reproducir una partida exacta.
 """
@@ -11,16 +12,17 @@ Es determinista con una semilla, así que los tests pueden reproducir una partid
 from __future__ import annotations
 
 import random
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, field
 
-from ..campanas import PerfilCampana
 from ..geo import Posicion, describir_relativa
 from ..habilidades.aterrizaje import CondicionesAterrizaje, simular_aterrizaje
 from ..modelo import (
     ACCIONES_AIRE,
     ACCIONES_TIERRA,
+    COBERTURA_OBJETO,
     NOMBRE_TIPO,
+    PELIGROS,
     Accion,
     Altitud,
     Contacto,
@@ -31,18 +33,19 @@ from ..modelo import (
     GrupoNuevo,
     MensajeChat,
     Objetivo,
+    ObjetoMapa,
     Observacion,
     Postura,
     ResultadoAccion,
     ResultadoMision,
     TipoAccion,
     TipoObjetivo,
+    TipoObjeto,
     TipoUnidad,
     UnidadPropia,
     VistaGlobal,
 )
 from ..puente.interfaz import ControlZeus, Mundo
-from . import enemigo
 from .escenario import Escenario, UnidadEscenario
 
 # Velocidades en m/s
@@ -74,6 +77,7 @@ PROB_IMPACTO = {
 # Cada impacto daña los vehículos de tierra; a partir de INMOVILIZADO ya no se mueven (ruedas, motor).
 DANO_VEHICULO = {TipoUnidad.MOTORIZADA: 0.25, TipoUnidad.BLINDADO: 0.05}
 INMOVILIZADO = 0.5
+COBERTURA_MAXIMA = 0.7
 COBERTURA_TERRENO = {"urbano": 0.5, "bosque": 0.4, "colina": 0.25, "setos": 0.35}
 OCULTACION_TERRENO = {"urbano": 0.6, "bosque": 0.5, "colina": 0.85, "setos": 0.6}
 DETECTABILIDAD_POSTURA = {Postura.SIGILO: 0.5, Postura.NORMAL: 1.0, Postura.COMBATE: 1.25}
@@ -84,6 +88,12 @@ RADIO_ZONA_CALIENTE = 500.0
 DISTANCIA_EMBARQUE = 80.0
 VISIBILIDAD_HORA = {"dia": 1500.0, "amanecer": 1000.0, "atardecer": 1000.0, "noche": 500.0}
 FACTOR_CLIMA = {"despejado": 1.0, "nubes": 0.9, "lluvia": 0.7, "niebla": 0.4}
+# Decorado: cuánto frena cada obstáculo (vehículos, infantería) y cuánto se ve dentro del humo.
+FRENO_OBJETO = {TipoObjeto.BARRICADA: (0.3, 1.0), TipoObjeto.ESCOMBROS: (0.4, 0.9), TipoObjeto.ALAMBRADA: (1.0, 0.5)}
+FACTOR_HUMO = 0.6
+FACTOR_TORRE = 1.3
+PROB_MINA = 0.3
+VISIBLE_ENEMIGO_M = 600.0
 
 
 @dataclass
@@ -112,14 +122,6 @@ class UnidadSim:
     pasajeros: list[str] = field(default_factory=list)
     embarcada_en: str | None = None
     intentos_aterrizaje: int = 0
-    # Guion (bandos no controlados por la IA)
-    comportamiento: str = "defender"
-    ruta: list[Posicion] = field(default_factory=list)
-    indice_ruta: int = -1
-    posicion_inicial: Posicion | None = None
-    radio_activacion: float = 300.0
-    activada: bool = False
-    ticks_combate: int = 0
     # Estado de combate
     bajo_fuego: bool = False
     bajo_fuego_previo: bool = False
@@ -155,14 +157,8 @@ class ContactoSim:
 
 
 class SimuladorTexto(Mundo, ControlZeus):
-    def __init__(
-        self,
-        escenario: Escenario,
-        perfil: PerfilCampana | None = None,
-        semilla: int | None = None,
-    ) -> None:
+    def __init__(self, escenario: Escenario, semilla: int | None = None) -> None:
         self.escenario = escenario
-        self.perfil = perfil
         self.rng = random.Random(semilla)
         self.tiempo = 0.0
         self.unidades: dict[str, UnidadSim] = {}
@@ -173,17 +169,15 @@ class SimuladorTexto(Mundo, ControlZeus):
         self.registro: list[Evento] = []
         self.chat_entrante: dict[str, list[MensajeChat]] = {}
         self.chat_log: list[MensajeChat] = []
-        self.alarma: dict[str, Posicion | None] = {}
         self._control: defaultdict[str, float] = defaultdict(float)
-        self._chat_guion = sorted(escenario.chat, key=lambda c: c.tiempo)
         self._resultado: ResultadoMision | None = None
         self.bandos = list(escenario.bandos)
-        self.bandos_ia = escenario.bandos_ia
-        if not self.bandos_ia:
-            raise ValueError("El escenario necesita al menos un bando con controlador: ia")
+        if not self.bandos:
+            raise ValueError("El escenario necesita al menos un bando")
         jugadores = escenario.bando_jugadores
-        self.bando_principal = jugadores if jugadores in self.bandos_ia else self.bandos_ia[0]
+        self.bando_principal = jugadores if jugadores in self.bandos else self.bandos[0]
         self.anuncios: list[MensajeChat] = []
+        self.objetos: list[ObjetoMapa] = [o.model_copy() for o in escenario.objetos]
 
         for nombre, bando in escenario.bandos.items():
             self.objetivos[nombre] = [o.model_copy(deep=True) for o in bando.objetivos]
@@ -191,14 +185,8 @@ class SimuladorTexto(Mundo, ControlZeus):
             self._etiquetas[nombre] = {}
             self.eventos[nombre] = []
             self.chat_entrante[nombre] = []
-            self.alarma[nombre] = None
-            contador: Counter[TipoUnidad] = Counter()
             for u in bando.unidades:
-                indicativo = u.indicativo
-                if indicativo is None and perfil is not None and bando.controlador == "ia":
-                    indicativo = perfil.indicativo_para(u.tipo, contador[u.tipo])
-                contador[u.tipo] += 1
-                self.unidades[u.id] = self._crear_unidad(u, nombre, indicativo or u.id.capitalize())
+                self.unidades[u.id] = self._crear_unidad(u, nombre, u.indicativo)
         self.efectivos_iniciales = {
             b: sum(u.efectivos for u in self._de(b) if not u.es_aerea) for b in self.bandos
         }
@@ -217,10 +205,6 @@ class SimuladorTexto(Mundo, ControlZeus):
             armada=u.armada,
             capacidad=u.capacidad,
             combustible=u.combustible,
-            comportamiento=u.comportamiento,
-            ruta=list(u.ruta),
-            posicion_inicial=u.posicion,
-            radio_activacion=u.radio_activacion,
         )
 
     # ------------------------------------------------------------------ consultas
@@ -241,13 +225,32 @@ class SimuladorTexto(Mundo, ControlZeus):
         dentro = [r for r in self.escenario.referencias if r.posicion.distancia(pos) <= r.radio_m]
         return min(dentro, key=lambda r: r.radio_m).tipo if dentro else "abierto"
 
+    def objetos_en(self, pos: Posicion, *tipos: TipoObjeto) -> list[ObjetoMapa]:
+        """Objetos del decorado activos que cubren un punto (de los tipos indicados, o todos)."""
+        return [o for o in self.objetos if o.activo and (not tipos or o.tipo in tipos)
+                and o.posicion.distancia(pos) <= o.radio_m]
+
+    def objetos_visibles(self, bando: str) -> list[ObjetoMapa]:
+        """Lo que un bando sabe del decorado: lo suyo, lo neutral que no es una trampa, y lo enemigo cercano."""
+        propias = [u.pos for u in self.operativas(bando) if u.estado != EstadoUnidad.EMBARCADA]
+        visibles = []
+        for o in self.objetos:
+            if not o.activo:
+                continue
+            if o.bando == bando:
+                visibles.append(o)
+            elif o.tipo in PELIGROS:
+                continue  # las trampas ajenas no se ven hasta que se pisan
+            elif o.bando is None or any(p.distancia(o.posicion) <= VISIBLE_ENEMIGO_M for p in propias):
+                visibles.append(o)
+        return visibles
+
     def _evento(self, bando: str, tipo: str, descripcion: str, unidad: str | None = None,
                 **datos: object) -> None:
         evento = Evento(tiempo=self.tiempo, tipo=tipo, descripcion=descripcion, unidad=unidad,
                         datos=dict(datos))
         self.registro.append(evento)
-        if bando in self.bandos_ia:
-            self.eventos[bando].append(evento)
+        self.eventos[bando].append(evento)
 
     def etiqueta(self, observador: str, objetivo_id: str) -> str:
         etiquetas = self._etiquetas[observador]
@@ -306,6 +309,7 @@ class SimuladorTexto(Mundo, ControlZeus):
             objetivos=objetivos,
             zonas_aterrizaje=self.escenario.zonas_aterrizaje,
             referencias=self.escenario.referencias,
+            objetos=self.objetos_visibles(bando),
             base=self.base(bando),
             condiciones=self.escenario.condiciones,
             eventos=eventos,
@@ -341,11 +345,6 @@ class SimuladorTexto(Mundo, ControlZeus):
         return [self.aplicar(bando, a) for a in acciones]
 
     async def recibir_chat(self, bando: str) -> list[MensajeChat]:
-        while self._chat_guion and self._chat_guion[0].tiempo <= self.tiempo:
-            guion = self._chat_guion.pop(0)
-            self.chat_entrante.setdefault(guion.bando, []).append(
-                MensajeChat(autor=guion.autor, texto=guion.texto, tiempo=self.tiempo)
-            )
         pendientes, self.chat_entrante[bando] = self.chat_entrante.get(bando, []), []
         self.chat_log.extend(pendientes)
         return pendientes
@@ -390,6 +389,7 @@ class SimuladorTexto(Mundo, ControlZeus):
             objetivos={b: [o.model_copy() for o in objs] for b, objs in self.objetivos.items()},
             condiciones=self.escenario.condiciones.model_copy(),
             mapa=self.escenario.mapa,
+            objetos=[o.model_copy() for o in self.objetos if o.activo],
         )
 
     async def crear_grupo(self, bando: str, grupo: GrupoNuevo) -> str:
@@ -418,6 +418,13 @@ class SimuladorTexto(Mundo, ControlZeus):
         self.escenario.condiciones = nuevas
         for bando in self.bandos:
             self._evento(bando, "condiciones", f"Cambian las condiciones: {nuevas.hora}, {nuevas.clima}")
+
+    async def colocar_objeto(self, objeto: ObjetoMapa) -> None:
+        mapa = self.escenario.mapa
+        objeto = objeto.model_copy(update={"posicion": objeto.posicion.limitar(mapa.ancho_m, mapa.alto_m)})
+        self.objetos.append(objeto)
+        if objeto.bando in self.bandos:
+            self._evento(objeto.bando, "decorado", f"Zeus coloca {objeto.tipo.value} en {objeto.posicion.cuadricula()}")
 
     async def anunciar(self, texto: str) -> None:
         mensaje = MensajeChat(autor="Zeus", texto=texto, canal="global", tiempo=self.tiempo, es_ia=True)
@@ -498,10 +505,8 @@ class SimuladorTexto(Mundo, ControlZeus):
             return
         dt = self.escenario.paso_s
         self.tiempo += dt
-        for bando in self.bandos:
-            if self.escenario.bandos[bando].controlador == "guion":
-                enemigo.planificar(self, bando)
         self._mover(dt)
+        self._peligros()
         self._detectar()
         self._combatir()
         self._actualizar_estado(dt)
@@ -539,6 +544,8 @@ class SimuladorTexto(Mundo, ControlZeus):
             velocidad *= 0.5 if u.tipo == TipoUnidad.INFANTERIA else 0.15
         if u.tipo != TipoUnidad.INFANTERIA and self.terreno(u.pos) in ("bosque", "urbano"):
             velocidad *= 0.5
+        for o in self.objetos_en(u.pos, *FRENO_OBJETO):
+            velocidad *= FRENO_OBJETO[o.tipo][0 if u.tipo != TipoUnidad.INFANTERIA else 1]
         avance = velocidad * dt
         u.stats["distancia_m"] += min(avance, distancia)
         u.pos = u.pos.hacia(u.destino, avance)
@@ -672,6 +679,33 @@ class SimuladorTexto(Mundo, ControlZeus):
         else:
             self._evento(u.bando, "aterrizaje", f"{u.indicativo} aterriza en {lugar}", u.id, **datos)
 
+    def _peligros(self) -> None:
+        """Minas e IED: hieren a quien no es de su bando cuando pasa por encima."""
+        for o in self.objetos:
+            if not o.activo or o.tipo not in PELIGROS:
+                continue
+            for u in list(self.unidades.values()):
+                if not u.en_suelo or u.es_aerea or u.bando == o.bando or u.pos.distancia(o.posicion) > o.radio_m:
+                    continue
+                if u.accion in (None, TipoAccion.ESPERAR, TipoAccion.DEFENDER) and o.tipo == TipoObjeto.MINAS:
+                    continue  # quien está quieto no pisa minas nuevas
+                if o.tipo == TipoObjeto.MINAS and self.rng.random() >= PROB_MINA:
+                    continue
+                que = "un campo de minas" if o.tipo == TipoObjeto.MINAS else "un artefacto explosivo (IED)"
+                self._evento(u.bando, "explosion", f"{u.indicativo} pisa {que} en {o.posicion.cuadricula()}", u.id,
+                             objeto=o.id)
+                if u.tipo in DANO_VEHICULO:
+                    antes = u.danos
+                    u.danos = min(1.0, u.danos + (0.6 if o.tipo == TipoObjeto.IED else 0.35))
+                    if antes < INMOVILIZADO <= u.danos:
+                        self._evento(u.bando, "inmovilizado", f"{u.indicativo} queda inmovilizado por la explosión",
+                                     u.id)
+                bajas = self.rng.randint(1, 3) if o.tipo == TipoObjeto.IED else 1
+                self._aplicar_bajas(u, bajas, causante=None, sorpresa=True)
+                if o.tipo == TipoObjeto.IED:
+                    o.activo = False
+                    break
+
     def _detectar(self) -> None:
         vis = self.escenario.condiciones.visibilidad_m
         factor_vis = min(1.2, max(0.25, vis / 1500.0))
@@ -689,6 +723,11 @@ class SimuladorTexto(Mundo, ControlZeus):
                         alcance = 300.0
                     if o.accion == TipoAccion.RECONOCER:
                         alcance *= 1.4
+                    if not o.es_aerea:
+                        if any(t.bando in (None, o.bando) for t in self.objetos_en(o.pos, TipoObjeto.TORRE_VIGILANCIA)):
+                            alcance *= FACTOR_TORRE
+                        if self.objetos_en(o.pos, TipoObjeto.HUMO):
+                            alcance *= FACTOR_HUMO
                     if e.es_aerea and e.en_vuelo:
                         alcance = max(alcance, 2500.0 * factor_vis)
                     if d > alcance:
@@ -697,8 +736,8 @@ class SimuladorTexto(Mundo, ControlZeus):
                     if not (e.es_aerea and e.en_vuelo):
                         p *= OCULTACION_TERRENO.get(self.terreno(e.pos), 1.0)
                         p *= DETECTABILIDAD_POSTURA[e.postura]
-                        if e.comportamiento == "emboscada" and not e.activada:
-                            p *= 0.5
+                        if self.objetos_en(e.pos, TipoObjeto.HUMO):
+                            p *= FACTOR_HUMO
                     if e.disparando:
                         p *= 1.6
                     if d < 120:
@@ -745,7 +784,9 @@ class SimuladorTexto(Mundo, ControlZeus):
             cobertura += 0.2
         if u.postura == Postura.SIGILO:
             cobertura += 0.1
-        return min(cobertura, 0.75)
+        extra = [COBERTURA_OBJETO[o.tipo] for o in self.objetos_en(u.pos, *COBERTURA_OBJETO)
+                 if o.bando in (None, u.bando)]
+        return min(cobertura + max(extra, default=0.0), COBERTURA_MAXIMA)
 
     def _combatir(self) -> None:
         for u in self.unidades.values():
@@ -756,9 +797,8 @@ class SimuladorTexto(Mundo, ControlZeus):
                 continue
             if a.es_aerea and not (a.armada and a.en_vuelo and a.accion == TipoAccion.APOYO_AEREO):
                 continue
-            emboscada_oculta = a.comportamiento == "emboscada" and not a.activada and a.bando not in self.bandos_ia
             sigilo = a.postura == Postura.SIGILO and a.accion not in (TipoAccion.ATACAR, TipoAccion.DEFENDER)
-            if emboscada_oculta or (sigilo and not a.bajo_fuego_previo):
+            if sigilo and not a.bajo_fuego_previo:
                 continue
             conocidos = self.contactos[a.bando]
             alcance = ALCANCE_ARMAS[a.tipo]
@@ -803,7 +843,6 @@ class SimuladorTexto(Mundo, ControlZeus):
         for a, b, impactos, sorpresa in disparos:
             a.disparando = a.en_contacto = True
             a.municion = max(0.0, a.municion - (0.02 if a.es_aerea else 0.04))
-            a.ticks_combate += 1
             if not b.operativa:
                 continue
             b.bajo_fuego = b.en_contacto = True

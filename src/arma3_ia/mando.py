@@ -33,7 +33,7 @@ from .agentes import (
     reglas,
 )
 from .agentes.situacion import RADIO_LZ_CALIENTE, contactos_cerca
-from .campanas import PerfilCampana
+from .ambientacion import PerfilCampana
 from .comunicacion import MensajeRadio, RedRadio, TipoMensaje
 from .config import Config
 from .habilidades import Habilidades

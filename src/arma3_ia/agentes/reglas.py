@@ -6,7 +6,7 @@ Se usan cuando el modelo falla o tarda demasiado (la IA nunca se queda congelada
 
 from __future__ import annotations
 
-from ..campanas import PerfilCampana
+from ..ambientacion import PerfilCampana
 from ..geo import Posicion, describir_relativa, parsear_posicion
 from ..modelo import (
     Accion,
@@ -165,10 +165,10 @@ def decision_comandante(obs: Observacion, perfil: PerfilCampana | None = None) -
             continue
         if obj.tipo == TipoObjetivo.DEFENDER:
             ordenes.append(OrdenMando(unidad=u.indicativo, tarea=TareaMando.DEFENDER,
-                                      destino=destino_obj, detalles=f"Objetivo: {obj.nombre}."))
+                                      destino=destino_obj, detalles=f"Objetivo: «{obj.nombre}»."))
         elif obj.tipo == TipoObjetivo.EXTRAER:
             ordenes.append(OrdenMando(unidad=u.indicativo, tarea=TareaMando.MOVER,
-                                      destino=destino_obj, detalles=f"Objetivo: {obj.nombre}."))
+                                      destino=destino_obj, detalles=f"Objetivo: «{obj.nombre}»."))
         elif obj.tipo == TipoObjetivo.RECONOCER:
             tarea = TareaMando.RECONOCER if i == 0 else TareaMando.DEFENDER
             destino = destino_obj if i == 0 else u.posicion.cuadricula()
@@ -176,15 +176,15 @@ def decision_comandante(obs: Observacion, perfil: PerfilCampana | None = None) -
         elif amenazas:
             ordenes.append(OrdenMando(unidad=u.indicativo, tarea=TareaMando.ATACAR, destino=destino_obj,
                                       objetivo=principal.id if principal else None,
-                                      detalles=f"Asaltad {obj.nombre} en coordinación."))
+                                      detalles=f"Asaltad la zona del objetivo «{obj.nombre}» en coordinación."))
         elif i == 0:
             ordenes.append(OrdenMando(unidad=u.indicativo, tarea=TareaMando.RECONOCER, destino=destino_obj,
-                                      detalles=f"Reconoced {obj.nombre}."))
+                                      detalles=f"Reconoced la zona del objetivo «{obj.nombre}»."))
         else:
             apoyo = obj.posicion.hacia(u.posicion, obj.radio_m + 300)
             ordenes.append(OrdenMando(unidad=u.indicativo, tarea=TareaMando.MOVER,
                                       destino=apoyo.cuadricula(),
-                                      detalles=f"Posición de apoyo junto a {obj.nombre}."))
+                                      detalles=f"Posición de apoyo junto al objetivo «{obj.nombre}»."))
 
     evaluacion = (
         f"{len(obs.contactos)} contacto(s) conocidos, {len(amenazas)} cerca del objetivo; "

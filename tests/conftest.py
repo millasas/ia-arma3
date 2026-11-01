@@ -8,30 +8,102 @@ from typing import Any
 
 import pytest
 
-from arma3_ia.campanas import PerfilCampana, cargar_perfil
+from arma3_ia.agentes.esquemas import OrdenMando, TareaMando
+from arma3_ia.ambientacion import InfoBando, PerfilCampana
 from arma3_ia.geo import Posicion
 from arma3_ia.memoria import Memoria
 from arma3_ia.modelo import (
+    Condiciones,
     Contacto,
     Mapa,
     Objetivo,
     Observacion,
+    Referencia,
     TipoObjetivo,
     TipoUnidad,
     UnidadPropia,
     ZonaAterrizaje,
 )
-from arma3_ia.simulador import Escenario, cargar_escenario
+from arma3_ia.simulador import BandoEscenario, Escenario, UnidadEscenario
+
+
+def P(x: float, y: float) -> Posicion:
+    return Posicion(x=x, y=y)
+
+
+def perfil_moderno() -> PerfilCampana:
+    """Una ambientación de prueba (en el programa las crea Zeus para cada campaña)."""
+    return PerfilCampana(
+        id="moderna", nombre="Prueba moderna", epoca="Actualidad",
+        descripcion="Fuerza conjunta moderna con radios cifradas y helicópteros.",
+        bando_ia=InfoBando(nombre="Fuerza de Tarea Aliada", descripcion="Infantería ligera con aviación."),
+        enemigo=InfoBando(nombre="Fuerzas hostiles", descripcion="Infantería y vehículos en posiciones preparadas.",
+                          doctrina=["Defensa en profundidad."], indicativo_mando="Fortaleza",
+                          indicativos={"infanteria": ["Rojo-1", "Rojo-2", "Rojo-3", "Rojo-4"],
+                                       "motorizada": ["Ariete-1"]}),
+        estilo_comunicacion="Procedimiento de radio militar en español: frases breves con indicativos.",
+        doctrina=["Reconocer antes de actuar.", "Fijar y flanquear."],
+        reglas_enfrentamiento=["Identificación positiva antes de abrir fuego."],
+        personalidad_mando="Metódico y profesional.",
+        medios_aereos=True, retardo_radio_s=0, indicativo_mando="Mando", indicativo_enlace="Mando-Radio",
+        indicativos={"infanteria": ["Alfa-1", "Bravo-1", "Charlie-1"], "helicoptero": ["Halcón-1", "Búho-1"]},
+        vocabulario=["cambio", "recibido"],
+    )
+
+
+def escenario_prueba() -> Escenario:
+    """Una aldea defendida con un bosque peligroso en medio (como las que prepara Zeus)."""
+    def orden(ind: str, tarea: TareaMando, destino: str | None = None, ruta: list[str] | None = None) -> OrdenMando:
+        return OrdenMando(unidad=ind, tarea=tarea, destino=destino, ruta=ruta or [])
+
+    return Escenario(
+        id="prueba_aldea", nombre="Asalto a Aldea Vieja", briefing="Tomar la aldea.", terreno="Altis",
+        zona="Aldea Vieja", mapa=Mapa(nombre="Valle de prueba", ancho_m=4000, alto_m=4000), duracion_max_s=3600,
+        condiciones=Condiciones(hora="dia", clima="despejado", visibilidad_m=1500, viento_ms=4),
+        referencias=[
+            Referencia(nombre="Aldea Vieja", tipo="urbano", posicion=P(2600, 2700), radio_m=250),
+            Referencia(nombre="Bosque Negro", tipo="bosque", posicion=P(1700, 1800), radio_m=400),
+            Referencia(nombre="Colina 214", tipo="colina", posicion=P(2000, 2900), radio_m=250),
+        ],
+        zonas_aterrizaje=[ZonaAterrizaje(id="lz_norte", nombre="LZ Norte", posicion=P(2700, 3500)),
+                          ZonaAterrizaje(id="lz_este", nombre="LZ Este", posicion=P(3400, 2100))],
+        bandos={
+            "blufor": BandoEscenario(nombre="Fuerza de Tarea Aliada", base=P(500, 500), unidades=[
+                UnidadEscenario(id="alfa", indicativo="Alfa-1", posicion=P(900, 800)),
+                UnidadEscenario(id="bravo", indicativo="Bravo-1", posicion=P(700, 1000)),
+                UnidadEscenario(id="halcon", indicativo="Halcón-1", tipo=TipoUnidad.HELICOPTERO,
+                                posicion=P(500, 500), efectivos=4, capacidad=1),
+                UnidadEscenario(id="buho", indicativo="Búho-1", tipo=TipoUnidad.HELICOPTERO,
+                                posicion=P(550, 450), efectivos=2, armada=True),
+            ], objetivos=[
+                Objetivo(id="obj_aldea", nombre="Tomar Aldea Vieja", tipo=TipoObjetivo.CAPTURAR,
+                         posicion=P(2600, 2700), radio_m=250),
+                Objetivo(id="obj_colina", nombre="Reconocer la Colina 214", tipo=TipoObjetivo.RECONOCER,
+                         posicion=P(2000, 2900), radio_m=250, prioridad=2, obligatorio=False),
+            ]),
+            "opfor": BandoEscenario(nombre="Fuerzas hostiles", mando=False, unidades=[
+                UnidadEscenario(id="guarnicion", indicativo="Rojo-1", posicion=P(2600, 2700), efectivos=6,
+                                orden=orden("Rojo-1", TareaMando.DEFENDER, "026027")),
+                UnidadEscenario(id="patrulla_norte", indicativo="Rojo-2", posicion=P(2700, 3300), efectivos=4,
+                                orden=orden("Rojo-2", TareaMando.PATRULLAR, ruta=["027033", "032029", "027028"])),
+                UnidadEscenario(id="emboscada_bosque", indicativo="Rojo-3", posicion=P(1650, 1750), efectivos=4,
+                                orden=orden("Rojo-3", TareaMando.EMBOSCAR, "016017")),
+                UnidadEscenario(id="qrf_motorizada", indicativo="Ariete-1", tipo=TipoUnidad.MOTORIZADA,
+                                posicion=P(3600, 3600), efectivos=4, orden=orden("Ariete-1", TareaMando.ESPERAR)),
+            ]),
+        },
+        bando_jugadores="blufor",
+    )
 
 
 @pytest.fixture
 def perfil() -> PerfilCampana:
-    return cargar_perfil("moderno")
+    return perfil_moderno()
 
 
 @pytest.fixture
 def escenario() -> Escenario:
-    return cargar_escenario("asalto_aldea")
+    return escenario_prueba()
 
 
 @pytest.fixture
@@ -171,3 +243,18 @@ class ServidorOllamaFalso:
 def servidor_ollama() -> Iterator[ServidorOllamaFalso]:
     with ServidorOllamaFalso() as servidor:
         yield servidor
+
+
+def construir_mision(tipo: Any, perfil: PerfilCampana, *, semilla: int = 1, duracion: int = 60,
+                     dificultad: float = 1.0) -> Any:
+    """Una misión preparada por Zeus con sus reglas (sin LLM): devuelve MisionConstruida."""
+    from arma3_ia.zeus import reglas
+    from arma3_ia.zeus.construir import construir_escenario
+
+    rng = reglas.rng_de("prueba", semilla)
+    capitulo = reglas.capitulo_por_reglas(tipo, "Kavala", rng)
+    personajes = [reglas.crear_persona(rng, perfil.id, "jugadores", set()) for _ in range(2)]
+    plan = reglas.mision_por_reglas(perfil, capitulo, nombre_campana="Prueba", terreno="Altis",
+                                    personajes=personajes, antagonista=None, dificultad=dificultad,
+                                    duracion_min=duracion, semilla=semilla)
+    return construir_escenario(plan, perfil, duracion_min=duracion, terrenos=["Altis"], semilla=semilla)

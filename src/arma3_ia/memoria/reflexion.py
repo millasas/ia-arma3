@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..campanas import PerfilCampana
+from ..ambientacion import PerfilCampana
 from ..llm import ClienteLLM, ErrorLLM, MensajeLLM, generar_estructurado
 from ..modelo import ResultadoMision
 from ..texto import recortar, reloj, similitud
@@ -48,8 +48,13 @@ class LeccionPropuesta(BaseModel):
     situacion: str
     leccion: str
     tipo: Literal["error", "acierto"] = "error"
-    alcance: Literal["campana", "general"] = "campana"
+    alcance: Literal["epoca", "general"] = "epoca"
     etiquetas: list[str] = Field(default_factory=list, json_schema_extra={"maxItems": 5})
+
+    @field_validator("alcance", mode="before")
+    @classmethod
+    def _alcance(cls, valor: Any) -> str:
+        return "general" if str(valor).strip().lower() == "general" else "epoca"
 
     @field_validator("situacion", "leccion")
     @classmethod
@@ -278,8 +283,8 @@ class Reflexion:
             f"{self.perfil.bloque_contexto(rol)}\n\n"
             "Extrae como máximo 3 lecciones CONCRETAS y ACCIONABLES que expliquen por qué pasó "
             "lo que pasó. Cada lección dice en qué situación aplica y qué hacer. Usa "
-            '"alcance": "general" si vale para cualquier época y "campana" si es propia de esta '
-            "campaña. No repitas lecciones que ya se conocen. Si no hay nada nuevo que aprender, "
+            '"alcance": "general" si vale para cualquier época y "epoca" si solo vale en esta '
+            "época. No repitas lecciones que ya se conocen. Si no hay nada nuevo que aprender, "
             "devuelve la lista vacía.\n"
             f"Responde SOLO con JSON con este formato:\n{EJEMPLO_REFLEXION}"
         )
@@ -292,8 +297,8 @@ class Reflexion:
 
     def guardar(self, propuesta: LeccionPropuesta, rol: str, mision_id: int) -> tuple[Leccion, bool]:
         """Guarda la lección o refuerza una casi idéntica. Devuelve (lección, es_nueva)."""
-        campana = None if propuesta.alcance == "general" else self.perfil.id
-        for existente in self.memoria.lecciones(rol=rol, campana=self.perfil.id, solo_activas=False):
+        epoca = None if propuesta.alcance == "general" else self.perfil.id
+        for existente in self.memoria.lecciones(rol=rol, epoca=self.perfil.id, solo_activas=False):
             if similitud(existente.leccion, propuesta.leccion) >= UMBRAL_DUPLICADO and existente.id:
                 self.memoria.reforzar_leccion(existente.id)
                 return self.memoria.leccion(existente.id) or existente, False
@@ -303,7 +308,7 @@ class Reflexion:
             leccion=propuesta.leccion,
             tipo=propuesta.tipo,
             etiquetas=propuesta.etiquetas,
-            campana=campana,
+            epoca=epoca,
             mision_origen=mision_id,
         )
         self.memoria.anadir_leccion(nueva)
@@ -327,7 +332,7 @@ class Reflexion:
 
         for rol in roles:
             contexto = self._contexto(rol, resultado, decisiones, eventos)
-            existentes = self.memoria.lecciones(rol=rol, campana=self.perfil.id)
+            existentes = self.memoria.lecciones(rol=rol, epoca=self.perfil.id)
 
             def fallback(rol: str = rol) -> ReflexionRol:
                 return reflexion_por_reglas(rol, resultado, eventos)

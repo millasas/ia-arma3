@@ -1,8 +1,8 @@
 """De lo que imagina Zeus (PlanMision) a una misión jugable (Escenario).
 
 El plan viene de un modelo pequeño, así que aquí se valida y se repara todo: lugares que no
-existen, coordenadas fuera del mapa, helicópteros en 1944, bandos sin objetivos, nombres
-repetidos... Cada arreglo queda anotado en ``avisos``.
+existen, coordenadas fuera del mapa, terrenos que no están instalados, helicópteros en 1944,
+bandos sin objetivos, nombres repetidos... Cada arreglo queda anotado en ``avisos``.
 """
 
 from __future__ import annotations
@@ -11,12 +11,13 @@ import random
 from dataclasses import dataclass, field
 
 from ..agentes.esquemas import OrdenMando, TareaMando
-from ..campanas import PerfilCampana
+from ..ambientacion import PerfilCampana
 from ..geo import Posicion, parsear_posicion
 from ..modelo import (
     Condiciones,
     Mapa,
     Objetivo,
+    ObjetoMapa,
     Referencia,
     TipoObjetivo,
     TipoUnidad,
@@ -25,7 +26,8 @@ from ..modelo import (
 from ..simulador.escenario import BandoEscenario, Escenario, UnidadEscenario
 from ..simulador.motor import FACTOR_CLIMA, VISIBILIDAD_HORA
 from ..texto import normalizar
-from .esquemas import BandoPlan, ObjetivoPlan, PlanMision, UnidadPlan
+from .esquemas import BandoPlan, ObjetivoPlan, ObjetoPlan, PlanMision, SucesoPlan, UnidadPlan
+from .mapas import elegir_terreno
 
 OBJETIVO_CONTRARIO = {
     TipoObjetivo.CAPTURAR: TipoObjetivo.DEFENDER,
@@ -40,6 +42,8 @@ OBJETIVO_CONTRARIO = {
 class MisionConstruida:
     escenario: Escenario
     avisos: list[str] = field(default_factory=list)
+    # Lo que Zeus deja preparado para que pase durante la misión (refuerzos, niebla...).
+    sucesos: list[SucesoPlan] = field(default_factory=list)
 
 
 def _slug(texto: str) -> str:
@@ -50,11 +54,18 @@ def construir_escenario(
     plan: PlanMision,
     perfil: PerfilCampana,
     *,
+    duracion_min: int = 60,
+    terrenos: list[str] | None = None,
+    terreno_campana: str | None = None,
     id_mision: str | None = None,
     semilla: int | None = None,
 ) -> MisionConstruida:
     rng = random.Random(semilla)
     avisos: list[str] = []
+    terrenos = terrenos or []
+    terreno = elegir_terreno(plan.terreno or terreno_campana, terrenos, terreno_campana)
+    if plan.terreno and terrenos and terreno != plan.terreno and plan.terreno not in terrenos:
+        avisos.append(f"El terreno '{plan.terreno}' no está instalado: uso {terreno}.")
     lado = plan.tamano_km * 1000.0
     limites = (lado, lado)
     centro = Posicion(x=lado / 2, y=lado / 2)
@@ -134,7 +145,7 @@ def construir_escenario(
         objetivos = []
         for j, op in enumerate(bp.objetivos):
             objetivos.append(_objetivo(op, j, bp.bando, situar(op.lugar, centro, op.nombre), ids_por_indicativo,
-                                       plan.duracion_min * 60, avisos))
+                                       duracion_min * 60, avisos))
         objetivos_por_bando[bp.bando] = objetivos
     if not objetivos_por_bando.get(jugadores):
         pos = next(iter(lugares.values()), centro)
@@ -160,7 +171,6 @@ def construir_escenario(
         if base is None and bp.bando == jugadores and unidades:
             base = unidades[0].posicion
         bandos[bp.bando] = BandoEscenario(
-            controlador="ia",
             nombre=bp.nombre,
             mando=bp.mando,
             comandante=bp.comandante,
@@ -169,25 +179,35 @@ def construir_escenario(
             objetivos=objetivos_por_bando.get(bp.bando, []),
         )
 
+    # Decorado: lo que Zeus coloca o cambia en el terreno.
+    bandos_validos = set(bandos)
+    objetos: list[ObjetoMapa] = []
+    for k, deco in enumerate(plan.decorado):
+        objetos.append(_objeto(deco, k, situar(deco.lugar, centro, deco.tipo.value), bandos_validos, jugadores,
+                               avisos))
+
     hora, clima = plan.hora, plan.clima
     condiciones = Condiciones(hora=hora, clima=clima,
                               visibilidad_m=VISIBILIDAD_HORA.get(hora, 1500.0) * FACTOR_CLIMA.get(clima, 1.0),
                               viento_ms=round(rng.uniform(1, 7), 1))
+    zona = plan.zona or (referencias[0].nombre if referencias else "zona de operaciones")
     escenario = Escenario(
         id=id_mision or _slug(plan.nombre),
         nombre=plan.nombre,
-        descripcion=plan.briefing,
         briefing=plan.briefing,
-        perfil_recomendado=perfil.id,
-        mapa=Mapa(nombre=f"Zona de operaciones ({plan.tamano_km} km)", ancho_m=lado, alto_m=lado),
-        duracion_max_s=plan.duracion_min * 60.0,
+        terreno=terreno,
+        zona=zona,
+        mapa=Mapa(nombre=f"{terreno}: {zona} ({plan.tamano_km} km)", ancho_m=lado, alto_m=lado),
+        duracion_max_s=duracion_min * 60.0,
         condiciones=condiciones,
         referencias=referencias,
         zonas_aterrizaje=lzs,
+        objetos=objetos,
         bandos=bandos,
         bando_jugadores=jugadores,
     )
-    return MisionConstruida(escenario, avisos)
+    sucesos = sorted((sp for sp in plan.sucesos if sp.minuto < duracion_min), key=lambda sp: sp.minuto)
+    return MisionConstruida(escenario, avisos, sucesos)
 
 
 def _bandos_validos(plan: PlanMision, avisos: list[str]) -> list[BandoPlan]:
@@ -243,6 +263,19 @@ def _objetivo(op: ObjetivoPlan, indice: int, bando: str, pos: Posicion, ids: dic
     )
 
 
+def _objeto(op: ObjetoPlan, indice: int, pos: Posicion, bandos: set[str], jugadores: str,
+            avisos: list[str]) -> ObjetoMapa:
+    bando = op.bando
+    if bando is not None and bando not in bandos:
+        avisos.append(f"El decorado '{op.tipo.value}' es de un bando que no existe ({bando}): lo dejo neutral.")
+        bando = None
+    if op.tipo.value in ("minas", "ied") and bando is None:
+        # Una trampa siempre la pone alguien: si no lo dice, es del enemigo de los jugadores.
+        bando = next((b for b in sorted(bandos) if b != jugadores), None)
+    return ObjetoMapa(id=f"obj{indice + 1}_{op.tipo.value}", tipo=op.tipo, posicion=pos, radio_m=op.radio_m,
+                      descripcion=op.descripcion, bando=bando)
+
+
 def _espejo(objetivos: list[Objetivo], destinos: dict[str, Posicion]) -> list[Objetivo]:
     """Objetivos del enemigo: lo contrario de lo que buscan los jugadores."""
     espejo = []
@@ -256,7 +289,7 @@ def _espejo(objetivos: list[Objetivo], destinos: dict[str, Posicion]) -> list[Ob
             continue
         espejo.append(o.model_copy(update={
             "id": f"{o.id}_contra",
-            "nombre": f"Impedir: {o.nombre}",
+            "nombre": f"Impedir que el enemigo logre: {o.nombre[:1].lower()}{o.nombre[1:]}",
             "tipo": tipo,
             # El enemigo que defiende gana si aguanta hasta el final (se agota el tiempo).
             "hasta_s": None,
