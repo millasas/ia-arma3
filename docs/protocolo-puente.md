@@ -1,5 +1,7 @@
 # Protocolo del puente ARMA 3 ↔ IA (v1)
 
+> Qué hace falta y cómo se construye el puente, paso a paso: [puente-arma3.md](puente-arma3.md).
+
 La IA no sabe si juega en el simulador de texto o en ARMA 3: solo habla con la interfaz
 `Mundo` (`src/arma3_ia/puente/interfaz.py`). El puente con ARMA 3 será otra implementación
 de `Mundo` que intercambia **líneas JSON** con el juego. Este documento fija el formato para
