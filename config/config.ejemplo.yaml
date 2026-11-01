@@ -1,47 +1,63 @@
 # Copia este fichero a config/config.yaml y ajústalo a tu equipo.
 #   cp config/config.ejemplo.yaml config/config.yaml
-# Las variables de entorno ARMA3IA_LLM_URL, ARMA3IA_LLM_MODELO, ARMA3IA_LLM_PROVEEDOR y
-# ARMA3IA_DB tienen prioridad sobre este fichero.
+# Las variables de entorno ARMA3IA_LLM_URL, ARMA3IA_LLM_MODELO, ARMA3IA_LLM_PROVEEDOR, ARMA3IA_DB
+# y ARMA3IA_CAMPANAS tienen prioridad sobre este fichero.
+# Las rutas relativas se cuentan desde la carpeta ia-arma3.
 
 llm:
   proveedor: ollama            # ollama | falso (falso = sin GPU, para pruebas)
   url: http://localhost:11434  # Ollama en el mismo PC de la IA
-  # Pensado para una GPU de 6 GB (RTX 3050/3060 de portátil). qwen3:4b cabe entero con contexto 8192.
+  # Pensado para una GPU de 6 GB (RTX 3050 de portátil). qwen3:4b cabe entero con contexto 8192.
   # Si quieres probar qwen3:8b (Q4, ~5,2 GB) en 6 GB: num_ctx 4096 y max_concurrencia 1, y aun así
   # puede que algunas capas vayan a la CPU (mira 'arma3-ia comprobar').
-  # Con 10-12 GB o más: qwen3:8b con num_ctx 8192 y max_concurrencia 2.
   modelo: qwen3:4b
   temperatura: 0.4
   num_ctx: 8192                # contexto por consulta (tokens)
-  max_tokens: 700
-  timeout_s: 120
+  max_tokens: 700              # respuestas de los NPC (Zeus tiene su propio límite, más abajo)
+  timeout_s: 300
   pensar: false                # qwen3 piensa más pero tarda mucho más; false para tiempo real
   keep_alive: 30m              # mantiene el modelo cargado en la GPU entre misiones
   max_concurrencia: 2          # consultas simultáneas a la GPU (igual que OLLAMA_NUM_PARALLEL)
   reintentos: 1                # reintentos si el modelo devuelve JSON inválido
+
+zeus:
+  # Terrenos de ARMA 3 instalados en el PC de juego: Zeus solo elige entre estos.
+  # Con DLC o mods añade los que tengas: Sefrou-Ramal, Cam Lao Nam, Normandía, Weferlingen,
+  # Chernarus, Takistan, Zargabad...
+  terrenos: [Altis, Stratis, Malden, Tanoa, Livonia]
+  max_tokens: 3000             # las respuestas de Zeus (campaña, misión) son largas
+  timeout_s: 400               # si el modelo tarda más, Zeus usa sus reglas
+  intervenir_cada_s: 300       # cada cuánto se plantea intervenir durante una misión
+
+campanas:
+  carpeta: CAMPAÑAS            # fichas, misiones e informes en texto
+  # Solo se usan si no dices cuántas misiones o cuánto dura cada una y no se te puede preguntar.
+  misiones_por_defecto: 4
+  duracion_mision_min: 60
+
+bbdd:
+  ruta: BBDD/ia-arma3.db       # la base de datos, en el mismo PC que la IA
+  limite_mb: 2048              # tamaño máximo de la base de datos + carpeta de campañas
+  minimo_libre_mb: 2048        # disco libre mínimo; por debajo, la IA entra en modo ahorro
+  reflexion: true              # informe post-acción y lecciones al final de cada misión
+  umbral_exito: 0.6
 
 agentes:
   intervalo_comandante_s: 120  # cada cuánto replantea el mando aunque no pase nada
   intervalo_lider_s: 90
   intervalo_piloto_s: 60
   intervalo_minimo_s: 25       # nadie decide más a menudo que esto (salvo eventos de su unidad)
-  timeout_decision_s: 90       # si el modelo tarda más, decide la doctrina por reglas
+  timeout_decision_s: 90       # si el modelo tarda más, el NPC decide por reglas
   lecciones_por_decision: 4
   usar_llm_comandante: true
   usar_llm_lideres: true
   usar_llm_pilotos: true
   usar_llm_enlace: true
-  jugadores_al_mando: false    # true = los jugadores pueden dar órdenes directas por chat
-  retransmitir_radio: true     # muestra a los jugadores la radio entre agentes
+  jugadores_al_mando: false    # true = los jugadores pueden dar órdenes directas a los NPC por radio
+  retransmitir_radio: true     # muestra a los jugadores la radio entre NPC
   max_mensajes_chat_por_paso: 3
-
-memoria:
-  ruta_db: datos/memoria.db
-  reflexion: true              # informe post-acción y lecciones al final de cada misión
-  umbral_exito: 0.6
 
 habilidades:
   explorar: false              # true = prueba variantes de maniobras en misiones para seguir aprendiendo
 
-perfil: moderno                # moderno | ww2 | insurgencia | contrainsurgencia | guerra_fria
 nivel_registro: INFO

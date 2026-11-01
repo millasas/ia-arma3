@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from ..campanas import PerfilCampana
+from ..ambientacion import PerfilCampana
 from ..comunicacion import MensajeRadio
 from ..memoria import Leccion
 from ..modelo import MensajeChat, Observacion, Persona, UnidadPropia
@@ -107,6 +107,7 @@ def usuario_comandante(
         ),
         s.seccion("ZONAS DE ATERRIZAJE", s.describir_lzs(obs)),
         s.seccion("TERRENO", s.describir_referencias(obs, centro)),
+        s.seccion("OBRAS Y OBSTÁCULOS CONOCIDOS", s.describir_objetos(obs, centro)),
         f"BASE: {obs.base.cuadricula()}" if obs.base else "",
         s.seccion("EVENTOS RECIENTES", s.describir_eventos(obs.eventos)),
         s.seccion("RADIO (mensajes recibidos)", s.describir_mensajes(mensajes)),
@@ -189,6 +190,7 @@ def usuario_unidad(
         s.seccion("UNIDADES AMIGAS", otras),
         s.seccion("ZONAS DE ATERRIZAJE", s.describir_lzs(obs)) if unidad.es_aerea else "",
         s.seccion("TERRENO CERCANO", s.describir_referencias(obs, unidad.posicion, 5)),
+        s.seccion("OBRAS Y OBSTÁCULOS CERCANOS", s.describir_objetos(obs, unidad.posicion, 5)),
         f"BASE: {obs.base.cuadricula()}" if obs.base else "",
         s.seccion("EVENTOS RECIENTES", s.describir_eventos(eventos, 6)),
         s.seccion("RADIO (mensajes recibidos)", s.describir_mensajes(mensajes, 6)),

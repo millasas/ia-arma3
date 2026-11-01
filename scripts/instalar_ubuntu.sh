@@ -94,7 +94,7 @@ python3 -m venv .venv
 sed -i "s/^  modelo: .*/  modelo: $MODELO/" config/config.yaml
 sed -i "s/^  num_ctx: [0-9]*/  num_ctx: $NUM_CTX/" config/config.yaml
 sed -i "s/^  max_concurrencia: [0-9]*/  max_concurrencia: $PARALELO/" config/config.yaml
-mkdir -p datos
+mkdir -p BBDD CAMPAÑAS
 
 paso "Comprobación"
 .venv/bin/pytest -q
@@ -104,8 +104,8 @@ ollama ps
 cat <<FIN
 
 Listo. En 'ollama ps' la columna PROCESSOR debe decir "100% GPU".
-Prueba una campaña:
+Pide tu primera campaña (Zeus decide todo lo demás):
   source .venv/bin/activate
-  arma3-ia campana nueva "una campaña en Normandía, 1944"
-  arma3-ia campana jugar --interactivo
+  arma3-ia campana nueva "campaña de 1944 para volar un puente, 3 misiones de 60 minutos"
+  arma3-ia campana jugar
 FIN

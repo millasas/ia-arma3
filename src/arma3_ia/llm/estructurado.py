@@ -61,19 +61,21 @@ async def generar_estructurado(
     *,
     reintentos: int = 1,
     temperatura: float | None = None,
+    max_tokens: int | None = None,
     metadatos: dict[str, Any] | None = None,
 ) -> tuple[T, RespuestaLLM]:
     """Pide al modelo un objeto `modelo` en JSON y lo valida.
 
     Si la respuesta no es válida se le muestra el error y se le pide que la corrija
-    (hasta `reintentos` veces). Lanza ErrorRespuestaLLM si no lo consigue.
+    (hasta `reintentos` veces). `max_tokens` limita la longitud de la respuesta (las de Zeus
+    son largas). Lanza ErrorRespuestaLLM si no lo consigue.
     """
     esquema = esquema_para_llm(modelo)
     historial = list(mensajes)
     ultimo_error: Exception | None = None
     for _ in range(reintentos + 1):
         respuesta = await llm.chat(
-            historial, esquema=esquema, temperatura=temperatura, metadatos=metadatos
+            historial, esquema=esquema, temperatura=temperatura, max_tokens=max_tokens, metadatos=metadatos
         )
         try:
             return modelo.model_validate(extraer_json(respuesta.texto)), respuesta

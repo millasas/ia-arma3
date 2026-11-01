@@ -12,7 +12,7 @@ from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel
 
-from ..campanas import PerfilCampana
+from ..ambientacion import PerfilCampana
 from ..comunicacion import MensajeRadio, TipoMensaje
 from ..config import ConfigAgentes, ConfigLLM
 from ..llm import ClienteLLM, ErrorLLM, MensajeLLM, generar_estructurado

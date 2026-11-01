@@ -313,6 +313,44 @@ class Referencia(BaseModel):
     radio_m: float = 200.0
 
 
+class TipoObjeto(str, Enum):
+    """Lo que Zeus puede colocar o cambiar en el mapa al preparar una misión (decorado)."""
+
+    FORTIFICACION = "fortificacion"        # sacos terreros, trincheras, búnker: protegen a quien defiende
+    PUESTO_CONTROL = "puesto_control"      # checkpoint: algo de protección
+    TORRE_VIGILANCIA = "torre_vigilancia"  # se ve más lejos desde ella
+    CAMPAMENTO = "campamento"
+    DEPOSITO = "deposito"                  # munición, combustible, suministros
+    MINAS = "minas"                        # campo de minas: bajas a quien lo cruza
+    IED = "ied"                            # artefacto explosivo: estalla una vez
+    BARRICADA = "barricada"                # corta la carretera: frena a los vehículos
+    ALAMBRADA = "alambrada"                # frena a la infantería
+    ESCOMBROS = "escombros"                # edificios derruidos: frenan vehículos y dan algo de cobertura
+    RUINAS = "ruinas"
+    RESTOS_VEHICULOS = "restos_vehiculos"
+    CRATERES = "crateres"
+    HUMO = "humo"                          # incendio o humo: se ve peor dentro
+
+
+# Cobertura extra para las unidades dentro (solo las del bando dueño si el objeto tiene bando).
+COBERTURA_OBJETO = {TipoObjeto.FORTIFICACION: 0.25, TipoObjeto.PUESTO_CONTROL: 0.15, TipoObjeto.ESCOMBROS: 0.1,
+                    TipoObjeto.RUINAS: 0.1}
+PELIGROS = frozenset({TipoObjeto.MINAS, TipoObjeto.IED})
+
+
+class ObjetoMapa(BaseModel):
+    """Elemento del decorado de una misión. En ARMA 3 será una composición colocada por Zeus."""
+
+    id: str
+    tipo: TipoObjeto
+    posicion: Posicion
+    radio_m: float = 60.0
+    descripcion: str = ""
+    # Quién lo ha puesto (una fortificación protege a los suyos, una mina no estalla a los suyos).
+    bando: str | None = None
+    activo: bool = True
+
+
 class Condiciones(BaseModel):
     hora: str = "dia"
     clima: str = "despejado"
@@ -345,6 +383,7 @@ class Observacion(BaseModel):
     objetivos: list[Objetivo] = Field(default_factory=list)
     zonas_aterrizaje: list[ZonaAterrizaje] = Field(default_factory=list)
     referencias: list[Referencia] = Field(default_factory=list)
+    objetos: list[ObjetoMapa] = Field(default_factory=list)
     base: Posicion | None = None
     condiciones: Condiciones = Field(default_factory=Condiciones)
     eventos: list[Evento] = Field(default_factory=list)
@@ -466,6 +505,7 @@ class VistaGlobal(BaseModel):
     objetivos: dict[str, list[Objetivo]] = Field(default_factory=dict)
     condiciones: Condiciones = Field(default_factory=Condiciones)
     mapa: Mapa | None = None
+    objetos: list[ObjetoMapa] = Field(default_factory=list)
 
     def fuerza(self, bando: str) -> tuple[int, int]:
         """(efectivos actuales, efectivos máximos) de las unidades de tierra de un bando."""

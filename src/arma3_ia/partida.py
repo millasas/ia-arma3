@@ -8,14 +8,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from .campanas import PerfilCampana
+from .ambientacion import PerfilCampana
 from .config import Config
 from .habilidades import Habilidades
 from .llm import ClienteLLM
 from .mando import CerebroBando, SalidaCerebro
 from .memoria import Leccion, Memoria, Reflexion
 from .memoria.reflexion import resumen_plantilla
-from .modelo import MensajeChat, ResultadoMision
+from .modelo import ResultadoMision
 from .puente import Mundo
 
 if TYPE_CHECKING:
@@ -27,11 +27,9 @@ AlPaso = Callable[[int, dict[str, SalidaCerebro]], "Awaitable[Any] | Any"]
 
 
 class Director(Protocol):
-    """Zeus durante la partida (ver zeus.DirectorPartida)."""
+    """Zeus durante la partida (ver zeus.DirectorPartida): actúa por su cuenta, no por encargo."""
 
     async def iniciar(self) -> None: ...
-
-    async def filtrar_chat(self, mensajes: list[MensajeChat]) -> list[MensajeChat]: ...
 
     async def supervisar(self) -> list[str]: ...
 
@@ -44,16 +42,15 @@ def preparar_cerebros(
     memoria: Memoria | None = None,
     habilidades: Habilidades | None = None,
 ) -> dict[str, CerebroBando]:
-    """Un cerebro por cada bando que lleva la IA, con los NPC (personas y tareas) que puso Zeus.
+    """Un cerebro por bando con los NPC (personas y tareas) que puso Zeus.
 
-    El bando de los jugadores usa el perfil tal cual y aprende (memoria); el bando contrario
-    usa el perfil visto desde el enemigo.
+    El bando de los jugadores usa la ambientación tal cual y aprende (memoria); el bando
+    contrario la usa vista desde el enemigo.
     """
-    principal = escenario.bando_jugadores if escenario.bando_jugadores in escenario.bandos_ia else (
-        escenario.bandos_ia[0])
+    nombres = list(escenario.bandos)
+    principal = escenario.bando_jugadores if escenario.bando_jugadores in nombres else nombres[0]
     cerebros = {}
-    for nombre in escenario.bandos_ia:
-        bando = escenario.bandos[nombre]
+    for nombre, bando in escenario.bandos.items():
         es_principal = nombre == principal
         cerebros[nombre] = CerebroBando(
             nombre, llm, perfil if es_principal else perfil.del_enemigo(), config,
@@ -88,8 +85,10 @@ class Partida:
         memoria: Memoria | None = None,
         reflexion: Reflexion | None = None,
         habilidades: Habilidades | None = None,
-        campana: str = "?",
-        escenario: str = "?",
+        escenario: Escenario | None = None,
+        campana_id: str | None = None,
+        capitulo: int | None = None,
+        titulo: str = "",
         max_pasos: int | None = None,
         al_paso: AlPaso | None = None,
         director: Director | None = None,
@@ -99,8 +98,10 @@ class Partida:
         self.memoria = memoria
         self.reflexion = reflexion
         self.habilidades = habilidades
-        self.campana = campana
         self.escenario = escenario
+        self.campana_id = campana_id
+        self.capitulo = capitulo
+        self.titulo = titulo
         self.max_pasos = max_pasos
         self.al_paso = al_paso
         self.director = director
@@ -108,7 +109,14 @@ class Partida:
     async def jugar(self) -> InformePartida:
         mision_id = None
         if self.memoria is not None:
-            mision_id = self.memoria.iniciar_mision(self.campana, self.escenario, ",".join(self.cerebros))
+            e = self.escenario
+            epocas = {c.perfil.id for c in self.cerebros.values()}
+            mision_id = self.memoria.iniciar_mision(
+                e.id if e else "?", campana_id=self.campana_id, capitulo=self.capitulo,
+                titulo=self.titulo or (e.nombre if e else ""), terreno=e.terreno if e else "",
+                epoca=epocas.pop() if len(epocas) == 1 else None,
+                bando=(e.bando_jugadores if e else None) or ",".join(self.cerebros),
+            )
         for cerebro in self.cerebros.values():
             cerebro.iniciar_mision(mision_id)
         if self.director is not None:
@@ -122,8 +130,6 @@ class Partida:
             for bando, cerebro in self.cerebros.items():
                 obs = await self.mundo.observar(bando)
                 chat = await self.mundo.recibir_chat(bando)
-                if self.director is not None:
-                    chat = await self.director.filtrar_chat(chat)
                 salida = await cerebro.paso(obs, chat)
                 resultados = await self.mundo.ejecutar(bando, salida.acciones)
                 for r in resultados:

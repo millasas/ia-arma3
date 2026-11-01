@@ -218,7 +218,7 @@ def test_enlace_por_reglas_entiende_peticiones(perfil, obs):
 def test_cerebro_un_paso_coordina_a_todos(perfil, obs, memoria):
     llm = LLMFalso()
     cerebro = CerebroBando("blufor", llm, perfil, memoria=memoria)
-    cerebro.iniciar_mision(memoria.iniciar_mision("moderno", "test"))
+    cerebro.iniciar_mision(memoria.iniciar_mision("test", epoca="moderna"))
     salida = asyncio.run(cerebro.paso(obs, [MensajeChat(autor="López", texto="¿Qué hacemos?")]))
     roles = {ll.metadatos["rol"] for ll in llm.llamadas}
     assert {"comandante", "enlace", "lider", "piloto"} <= roles

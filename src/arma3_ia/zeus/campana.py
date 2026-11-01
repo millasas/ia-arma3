@@ -1,24 +1,39 @@
-"""Estado de una campaña dirigida por Zeus: capítulos, personajes, historial y dificultad.
+"""Estado de una campaña dirigida por Zeus: pasos, personajes, historial, margen de error y final.
 
-Se guarda en la memoria (tabla ``campanas``) después de cada misión, así que la campaña
-continúa donde se dejó aunque se apague el PC. Los personajes recuerdan lo que han vivido y
-pueden morir; Zeus ajusta la dificultad según cómo les va a los jugadores.
+Una campaña tiene **un solo objetivo final** y el número de misiones (pasos) que pidió el
+anfitrión. Cada paso tiene su propio problema y puede salir mal: una derrota gasta margen de
+error, perder un paso crítico o quedarse sin margen hace imposible el objetivo, y entre misión
+y misión pueden surgir imprevistos (algunos graves). El objetivo final se cumple solo si se
+gana la última misión.
+
+Se guarda en la base de datos después de cada cambio, así que la campaña continúa donde se
+dejó aunque se apague el PC.
 """
 
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..ambientacion import PerfilCampana
 from ..modelo import Persona, ResultadoMision
 from ..simulador.escenario import Escenario
 from ..texto import normalizar, reloj
-from .esquemas import CapituloPlan, PlanCampana, TipoMision
-from .reglas import crear_persona
+from .esquemas import CapituloPlan, PlanCampana
+from .reglas import crear_persona, imprevisto_por_reglas
 
 DIFICULTAD_MIN, DIFICULTAD_MAX = 0.6, 1.8
 MAX_RECUERDOS = 8
+PROB_IMPREVISTO = 0.35
+
+
+def margen_inicial(misiones: int) -> int:
+    """Cuántas derrotas puede encajar la campaña sin que el objetivo se pierda."""
+    return max(0, misiones // 3)
 
 
 class Personaje(BaseModel):
@@ -37,26 +52,62 @@ class RegistroMision(BaseModel):
     bajas_enemigas: int = 0
     duracion_s: float = 0.0
     mision_id: int | None = None
+    terreno: str = ""
+
+
+class Imprevisto(BaseModel):
+    texto: str
+    grave: bool = False
+
+
+@dataclass
+class Registro:
+    """Lo que ha cambiado en la campaña al cerrar una misión."""
+
+    cambios: list[str] = field(default_factory=list)
+    caidos: list[Persona] = field(default_factory=list)
+    imprevisto: Imprevisto | None = None
 
 
 class EstadoCampana(BaseModel):
     id: str
+    encargo: str
+    perfil: PerfilCampana
+    terreno: str
     plan: PlanCampana
+    duracion_mision_min: int = 60
     capitulo: int = 0
     dificultad: float = 1.0
+    margen: int = 0
+    margen_inicial: int = 0
     personajes: list[Personaje] = Field(default_factory=list)
     antagonista: Persona | None = None
     historial: list[RegistroMision] = Field(default_factory=list)
     terminada: bool = False
+    resultado_final: Literal["cumplida", "fracasada"] | None = None
+    motivo_final: str = ""
+    creada: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
     @classmethod
-    def nueva(cls, plan: PlanCampana) -> EstadoCampana:
+    def nueva(cls, encargo: str, perfil: PerfilCampana, terreno: str, plan: PlanCampana,
+              duracion_mision_min: int) -> EstadoCampana:
+        margen = margen_inicial(len(plan.capitulos))
         return cls(
             id=normalizar(plan.nombre).replace(" ", "_")[:40] or "campana",
+            encargo=encargo,
+            perfil=perfil,
+            terreno=terreno,
             plan=plan,
+            duracion_mision_min=duracion_mision_min,
+            margen=margen,
+            margen_inicial=margen,
             personajes=[Personaje(persona=p) for p in plan.personajes],
             antagonista=plan.antagonista,
         )
+
+    @property
+    def misiones_total(self) -> int:
+        return len(self.plan.capitulos)
 
     @property
     def capitulo_actual(self) -> CapituloPlan | None:
@@ -64,26 +115,42 @@ class EstadoCampana(BaseModel):
             return None
         return self.plan.capitulos[self.capitulo]
 
+    @property
+    def estado_texto(self) -> str:
+        if self.resultado_final == "cumplida":
+            return "OBJETIVO CUMPLIDO"
+        if self.resultado_final == "fracasada":
+            return "OBJETIVO NO CUMPLIDO"
+        return f"en curso (misión {self.capitulo + 1} de {self.misiones_total})"
+
     def vivos(self) -> list[Persona]:
         return [p.persona for p in self.personajes if p.vivo]
 
-    def resumen(self) -> str:
+    def resumen(self, lore: list[str] | None = None) -> str:
         """Lo que Zeus necesita saber para preparar la siguiente misión."""
+        p = self.perfil
         lineas = [f"CAMPAÑA: {self.plan.nombre}. {self.plan.premisa}",
-                  f"Jugadores: {self.plan.nombre_jugadores}. Enemigo: {self.plan.nombre_enemigo}."]
+                  f"OBJETIVO FINAL: {self.plan.objetivo_final}",
+                  f"Época: {p.epoca}. Terreno principal: {self.terreno}.",
+                  f"Jugadores: {p.bando_ia.nombre}. Enemigo: {p.enemigo.nombre}."]
         if self.antagonista:
             lineas.append(f"Antagonista: {self.antagonista.presentacion()}")
-        lineas.append("CAPÍTULOS:")
+        lineas.append(f"PASOS ({self.misiones_total} misiones de {self.duracion_mision_min} min):")
         for i, c in enumerate(self.plan.capitulos):
             marca = "✓" if i < self.capitulo else ("→" if i == self.capitulo else " ")
-            lineas.append(f" {marca} {i + 1}. {c.titulo} ({c.tipo.value}): {c.sinopsis}")
-        if self.historial:
+            critico = " [CRÍTICO]" if c.critico else ""
+            lineas.append(f" {marca} {i + 1}. {c.titulo} ({c.tipo.value}){critico}: {c.sinopsis}"
+                          + (f" Problema: {c.complicacion}" if c.complicacion else ""))
+        if lore:
+            lineas.append("LO QUE HA PASADO (crónica):")
+            lineas += [f"- {t}" for t in lore[-6:]]
+        elif self.historial:
             lineas.append("LO QUE HA PASADO:")
-            lineas += [f"- {r.titulo}: {r.estado} (puntuación {r.puntuacion:.2f}, bajas {r.bajas_propias}). "
-                       f"{r.resumen}" for r in self.historial[-5:]]
+            lineas += [f"- {r.titulo}: {r.estado} (bajas {r.bajas_propias}). {r.resumen}" for r in self.historial[-5:]]
         if self.personajes:
             lineas.append("PERSONAJES ALIADOS:")
             lineas += [f"- {p.persona.presentacion()}" + ("" if p.vivo else " [MUERTO]") for p in self.personajes]
+        lineas.append(f"MARGEN DE ERROR: quedan {self.margen} derrota(s) que se pueden encajar.")
         lineas.append(f"DIFICULTAD ACTUAL: {self.dificultad:.2f} (1 = normal; sube si los jugadores ganan con "
                       "facilidad y baja si pierden).")
         return "\n".join(lineas)
@@ -96,16 +163,18 @@ class EstadoCampana(BaseModel):
         mision_id: int | None = None,
         resumen: str = "",
         semilla: int | None = None,
-    ) -> list[str]:
-        """Apunta el resultado de la misión y hace avanzar la historia. Devuelve lo que ha cambiado."""
+    ) -> Registro:
+        """Apunta el resultado de la misión y hace avanzar (o hundirse) la campaña."""
         capitulo = self.capitulo_actual
         titulo = capitulo.titulo if capitulo else escenario.nombre
-        cambios: list[str] = []
+        registro = Registro()
+        cambios = registro.cambios
         self.historial.append(RegistroMision(
             capitulo=self.capitulo, titulo=titulo, estado=resultado.estado, puntuacion=resultado.puntuacion,
             resumen=resumen, bajas_propias=resultado.bajas_propias, bajas_enemigas=resultado.bajas_enemigas,
-            duracion_s=resultado.duracion_s, mision_id=mision_id,
+            duracion_s=resultado.duracion_s, mision_id=mision_id, terreno=escenario.terreno,
         ))
+        rng = random.Random(f"{semilla}|{self.id}|{self.capitulo}")
 
         # Personajes: quién estuvo, quién cayó y qué recuerdan.
         metricas = resultado.metricas.get("unidades", {})
@@ -121,6 +190,7 @@ class EstadoCampana(BaseModel):
             datos = metricas.get(uid, {})
             if datos.get("destruida"):
                 personaje.vivo = False
+                registro.caidos.append(personaje.persona)
                 cambios.append(f"{personaje.persona.presentacion().split('.')[0]} ha caído en «{titulo}».")
                 continue
             perdidos = int(datos.get("efectivos_iniciales", 0)) - int(datos.get("efectivos_finales", 0))
@@ -128,10 +198,9 @@ class EstadoCampana(BaseModel):
             recuerdo += f" perdiste a {perdidos} de los tuyos" if perdidos > 0 else " no perdiste a nadie"
             personaje.persona.recuerdos = [*personaje.persona.recuerdos, recuerdo][-MAX_RECUERDOS:]
 
-        rng = random.Random(semilla if semilla is not None else len(self.historial))
         usados = {p.persona.nombre for p in self.personajes}
         while len(self.vivos()) < 2:
-            nuevo = crear_persona(rng, self.plan.perfil, "jugadores", usados)
+            nuevo = crear_persona(rng, self.perfil.id, "jugadores", usados)
             nuevo.historia = f"Se incorpora a la campaña después de «{titulo}». {nuevo.historia}"
             self.personajes.append(Personaje(persona=nuevo))
             cambios.append(f"Se incorpora {nuevo.presentacion().split('.')[0]}.")
@@ -150,17 +219,52 @@ class EstadoCampana(BaseModel):
         elif self.dificultad < anterior:
             cambios.append(f"Ha sido duro: la próxima misión dará algo de respiro (dificultad {self.dificultad:.2f}).")
 
-        # La historia sigue: una derrota abre un capítulo nuevo en vez de repetir el mismo.
-        if resultado.estado == "derrota" and capitulo is not None:
-            insertado = CapituloPlan(
-                titulo=f"Contraataque tras «{titulo}»",
-                sinopsis=f"Después del fracaso en «{titulo}» el enemigo contraataca. Hay que reagruparse y aguantar.",
-                tipo=TipoMision.DEFENSA,
-            )
-            self.plan.capitulos.insert(self.capitulo + 1, insertado)
-            cambios.append(f"La derrota cambia la historia: nuevo capítulo «{insertado.titulo}».")
+        # ¿Sigue siendo posible el objetivo final?
+        ultima = self.capitulo >= self.misiones_total - 1
+        if ultima:
+            if resultado.estado == "victoria":
+                self._terminar("cumplida", f"Se ganó la misión final «{titulo}».")
+            else:
+                self._terminar("fracasada", f"La misión final «{titulo}» terminó en {resultado.estado}.")
+        elif resultado.estado == "derrota":
+            if capitulo is not None and capitulo.critico:
+                self._terminar("fracasada", f"Se perdió «{titulo}», un paso crítico: ya no hay forma de llegar.")
+            else:
+                self.margen -= 1
+                if self.margen < 0:
+                    self._terminar("fracasada", "Demasiadas derrotas: ya no quedan fuerzas ni tiempo para el objetivo.")
+                else:
+                    cambios.append(f"La derrota cuesta caro: queda margen para {self.margen} derrota(s) más.")
+        if self.terminada:
+            cambios.append(f"Fin de la campaña: {self.estado_texto}. {self.motivo_final}")
+            self.capitulo += 1
+            return registro
+
+        # Imprevistos: el plan nunca sale como se espera.
+        if rng.random() < PROB_IMPREVISTO:
+            imprevisto = imprevisto_por_reglas(rng)
+            registro.imprevisto = Imprevisto(texto=imprevisto[0], grave=imprevisto[1])
+            siguiente = self.plan.capitulos[self.capitulo + 1]
+            siguiente.complicacion = (f"{siguiente.complicacion} Además: {imprevisto[0]}".strip()
+                                      if imprevisto[0] not in siguiente.complicacion else siguiente.complicacion)
+            cambios.append(f"Imprevisto{' GRAVE' if imprevisto[1] else ''}: {imprevisto[0]}")
+            if imprevisto[1]:
+                # Un golpe de mala suerte gasta margen. Sin margen, si además la misión no salió
+                # bien, la campaña se hunde; si salió bien, el siguiente paso pasa a ser a vida o muerte.
+                if self.margen > 0:
+                    self.margen -= 1
+                    cambios.append(f"Se pierde margen de error: quedan {self.margen} derrota(s) que encajar.")
+                elif resultado.estado != "victoria":
+                    self._terminar("fracasada", f"Un error y un imprevisto lo han echado todo a perder: "
+                                                f"{imprevisto[0]}")
+                    cambios.append(f"Fin de la campaña: {self.estado_texto}. {self.motivo_final}")
+                elif not siguiente.critico:
+                    siguiente.critico = True
+                    cambios.append(f"Ya no queda margen: «{siguiente.titulo}» pasa a ser crítica.")
         self.capitulo += 1
-        if self.capitulo >= len(self.plan.capitulos):
-            self.terminada = True
-            cambios.append("Fin de la campaña.")
-        return cambios
+        return registro
+
+    def _terminar(self, resultado: Literal["cumplida", "fracasada"], motivo: str) -> None:
+        self.terminada = True
+        self.resultado_final = resultado
+        self.motivo_final = motivo

@@ -1,33 +1,50 @@
-"""Perfiles de campaña: la "temática" con la que piensa y habla la IA.
+"""Ambientación de una campaña: la "temática" con la que piensan y hablan Zeus y los NPC.
 
-Cada perfil es un YAML con la época, los bandos, la doctrina táctica, las restricciones
-técnicas (sin GPS en 1944, sin aviación en una guerrilla...), el estilo de radio y los
-indicativos. Se pueden crear perfiles nuevos copiando uno de ``campanas/perfiles``.
+No hay ambientaciones fijas: Zeus inventa una para cada campaña a partir de lo que pide el
+anfitrión (época, bandos, doctrina, restricciones técnicas, estilo de radio, indicativos...)
+y se guarda dentro de la campaña. El campo ``id`` es la **era** (segunda guerra mundial,
+guerra fría, moderna o futura): sirve para que lo aprendido en una campaña se aproveche en
+otras de la misma era.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import Any
 
-import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from ..modelo import TipoUnidad
+from .texto import normalizar, recortar
 
-DIRECTORIO_PERFILES = Path(__file__).parent / "perfiles"
+ERAS = ("segunda_guerra_mundial", "guerra_fria", "moderna", "futura")
+_CLAVES_ERA = (
+    (("194", "193", "segunda", "ww2", "wwii", "nazi", "wehrmacht"), "segunda_guerra_mundial"),
+    (("fria", "196", "197", "198", "vietnam", "sovietic", "urss"), "guerra_fria"),
+    (("futur", "ciencia_ficcion", "205", "206", "210"), "futura"),
+)
+
+
+def normalizar_era(valor: Any) -> str:
+    """'Segunda Guerra Mundial', 'WW2' o '1944' -> 'segunda_guerra_mundial'."""
+    norm = normalizar(str(valor or "")).replace(" ", "_")
+    if norm in ERAS:
+        return norm
+    for claves, era in _CLAVES_ERA:
+        if any(c in norm for c in claves):
+            return era
+    return "moderna"
 
 
 class InfoBando(BaseModel):
     nombre: str
     descripcion: str = ""
-    # Solo se usan cuando la IA juega también este bando (ver PerfilCampana.del_enemigo).
+    # Solo se usan cuando la IA juega este bando como enemigo (ver PerfilCampana.del_enemigo).
     doctrina: list[str] = Field(default_factory=list)
     indicativo_mando: str = "Mando"
     indicativos: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class PerfilCampana(BaseModel):
-    id: str
+    id: str = Field(default="moderna", description="Era: " + ", ".join(ERAS))
     nombre: str
     epoca: str
     descripcion: str
@@ -46,11 +63,28 @@ class PerfilCampana(BaseModel):
     indicativos: dict[str, list[str]] = Field(default_factory=dict)
     vocabulario: list[str] = Field(default_factory=list)
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def _era(cls, valor: Any) -> str:
+        return normalizar_era(valor)
+
+    @field_validator("descripcion", "estilo_comunicacion", "personalidad_mando", mode="before")
+    @classmethod
+    def _recortar(cls, valor: Any) -> Any:
+        return recortar(valor, 500) if isinstance(valor, str) else valor
+
+    @field_validator("retardo_radio_s", mode="before")
+    @classmethod
+    def _retardo(cls, valor: Any) -> float:
+        try:
+            return max(0.0, min(120.0, float(valor)))
+        except (TypeError, ValueError):
+            return 0.0
+
     def del_enemigo(self) -> PerfilCampana:
-        """El mismo perfil visto desde el otro bando, para que la IA juegue también al enemigo."""
+        """La misma ambientación vista desde el otro bando, para que la IA juegue también al enemigo."""
         return self.model_copy(
             update={
-                "id": self.id,
                 "bando_ia": InfoBando(nombre=self.enemigo.nombre, descripcion=self.enemigo.descripcion),
                 "enemigo": InfoBando(nombre=self.bando_ia.nombre, descripcion=self.bando_ia.descripcion),
                 "doctrina": list(self.enemigo.doctrina),
@@ -61,11 +95,6 @@ class PerfilCampana(BaseModel):
                 "indicativos": dict(self.enemigo.indicativos),
             }
         )
-
-    def indicativo_para(self, tipo: TipoUnidad, indice: int) -> str | None:
-        """Indicativo temático para la unidad nº `indice` de ese tipo (None si no hay)."""
-        lista = self.indicativos.get(tipo.value, [])
-        return lista[indice] if indice < len(lista) else None
 
     def bloque_contexto(self, rol: str) -> str:
         """Texto de ambientación que se añade a las instrucciones de cada agente."""
@@ -87,33 +116,3 @@ class PerfilCampana(BaseModel):
         if self.personalidad_mando and rol == "comandante":
             lineas.append(f"Tu carácter: {self.personalidad_mando}")
         return "\n".join(lineas)
-
-
-def cargar_perfil_fichero(ruta: str | Path) -> PerfilCampana:
-    datos = yaml.safe_load(Path(ruta).read_text(encoding="utf-8")) or {}
-    return PerfilCampana.model_validate(datos)
-
-
-def perfiles_disponibles(directorio_extra: str | Path | None = None) -> dict[str, PerfilCampana]:
-    """Perfiles incluidos en el paquete más los de `directorio_extra` (que tienen prioridad)."""
-    perfiles: dict[str, PerfilCampana] = {}
-    directorios = [DIRECTORIO_PERFILES]
-    if directorio_extra and Path(directorio_extra).is_dir():
-        directorios.append(Path(directorio_extra))
-    for directorio in directorios:
-        for ruta in sorted(directorio.glob("*.yaml")):
-            perfil = cargar_perfil_fichero(ruta)
-            perfiles[perfil.id] = perfil
-    return perfiles
-
-
-def cargar_perfil(id_o_ruta: str, directorio_extra: str | Path | None = None) -> PerfilCampana:
-    """Carga un perfil por id ("ww2") o por ruta a un fichero YAML."""
-    ruta = Path(id_o_ruta)
-    if ruta.suffix in (".yaml", ".yml") and ruta.is_file():
-        return cargar_perfil_fichero(ruta)
-    perfiles = perfiles_disponibles(directorio_extra)
-    if id_o_ruta not in perfiles:
-        disponibles = ", ".join(sorted(perfiles))
-        raise KeyError(f"No existe el perfil '{id_o_ruta}'. Disponibles: {disponibles}")
-    return perfiles[id_o_ruta]

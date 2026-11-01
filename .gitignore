@@ -14,9 +14,16 @@ venv/
 .coverage
 htmlcov/
 
-# Datos locales de la IA (memoria, datasets, configuración propia)
+# Datos locales de la IA: la base de datos, las campañas y la configuración propia
+# (las carpetas se guardan en git solo con su README).
+BBDD/*
+!BBDD/README.md
+CAMPAÑAS/*
+!CAMPAÑAS/README.md
 datos/
 *.db
+*.db-wal
+*.db-shm
 *.db-journal
 *.jsonl
 config/config.yaml
