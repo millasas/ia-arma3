@@ -27,13 +27,20 @@ else
     exit 0
 fi
 
-# Portátil híbrido: con PRIME en modo "nvidia" la gráfica dedicada queda siempre encendida y no se
-# duerme entre consultas (en modo "on-demand" puede tardar en despertar).
+# Portátil híbrido. En Ubuntu Desktop el escritorio tiene que ir en la integrada (modo "on-demand"):
+# en modo "nvidia" el escritorio se dibuja con la RTX, le quita VRAM a la IA y en portátiles con
+# Radeon integrada provoca cuelgues de pantalla. Ollama usa la NVIDIA igual en "on-demand".
+# Solo en un sistema sin escritorio (Server) se fuerza "nvidia" para que la gráfica no se duerma.
 if command -v prime-select >/dev/null; then
     actual="$(prime-select query 2>/dev/null || true)"
-    if [ "$actual" != "nvidia" ]; then
-        sudo prime-select nvidia
-        aviso "PRIME cambiado a 'nvidia' (antes: ${actual:-desconocido}). Reinicia cuando termine el script."
+    if [ "$(systemctl get-default 2>/dev/null || true)" = "graphical.target" ]; then
+        deseado="on-demand"
+    else
+        deseado="nvidia"
+    fi
+    if [ "$actual" != "$deseado" ]; then
+        sudo prime-select "$deseado"
+        aviso "PRIME cambiado a '$deseado' (antes: ${actual:-desconocido}). Reinicia cuando termine el script."
     fi
 fi
 

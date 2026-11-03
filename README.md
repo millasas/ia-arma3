@@ -97,7 +97,8 @@ driver de NVIDIA o cambia PRIME te pedirá reiniciar: reinicia y vuelve a lanzar
 
    ```bash
    sudo ubuntu-drivers install
-   sudo prime-select nvidia   # la NVIDIA siempre encendida, no se duerme entre consultas
+   sudo prime-select on-demand   # Ubuntu Desktop: escritorio en la integrada, Ollama en la NVIDIA
+   # (solo en Ubuntu Server sin escritorio: sudo prime-select nvidia)
    sudo reboot
    nvidia-smi                 # debe mostrar la RTX 3050 Laptop con 6 GB (6144 MiB)
    ```
